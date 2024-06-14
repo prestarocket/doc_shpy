@@ -1,9 +1,87 @@
+<!-- TOC -->
+
+- [Shopify](#shopify)
+- [Create Theme from scratch](#create-theme-from-scratch)
+    - [Create Folder](#create-folder)
+    - [List of Pages of Shopify Website](#list-of-pages-of-shopify-website)
+- [global.js File](#globaljs-file)
+    - [getFocusableElements Function](#getfocusableelements-function)
+    - [onKeyUpEscape Function](#onkeyupescape-function)
+    - [removeTrapFocus Function](#removetrapfocus-function)
+    - [Accordion Function](#accordion-function)
+    - [trapFocus Function](#trapfocus-function)
+        - [Example Usage](#example-usage)
+    - [focusVisiblePolyfill Function](#focusvisiblepolyfill-function)
+    - [pauseAllMedia Function](#pauseallmedia-function)
+    - [QuantityInput Class](#quantityinput-class)
+    - [Debounce Function](#debounce-function)
+    - [Throttle Function](#throttle-function)
+    - [Fetch Config Function](#fetch-config-function)
+- [Shopify Functions](#shopify-functions)
+    - [Bind Function](#bind-function)
+    - [Set Selector by Value Function](#set-selector-by-value-function)
+    - [Add Listener Function](#add-listener-function)
+    - [Post Link Function](#post-link-function)
+    - [Country Province Selector](#country-province-selector)
+    - [Country Province Selector Prototype](#country-province-selector-prototype)
+    - [MenuDrawer Class](#menudrawer-class)
+    - [Header Drawer Class](#header-drawer-class)
+    - [ModalDialog Class](#modaldialog-class)
+    - [ModelOpener Class](#modelopener-class)
+    - [DeferredMedia Class](#deferredmedia-class)
+    - [SliderComponent Class](#slidercomponent-class)
+    - [SlideshowComponent Class](#slideshowcomponent-class)
+    - [VariantSelect Class](#variantselect-class)
+    - [ProductRecomendations Class](#productrecomendations-class)
+    - [Account Icon](#account-icon)
+    - [FacetFiltersForm Class](#facetfiltersform-class)
+    - [Price Range Class](#price-range-class)
+    - [FacetRemove Class](#facetremove-class)
+- [constant.js](#constantjs)
+    - [PUB_SUB_EVENTS](#pub_sub_events)
+- [CustomerAddress Class](#customeraddress-class)
+    - [DetailsDisclosure Class](#detailsdisclosure-class)
+    - [HeaderMenu Class](#headermenu-class)
+    - [DetailsModel Class](#detailsmodel-class)
+    - [Localization Form](#localization-form)
+    - [createOverlay Function](#createoverlay-function)
+    - [prepareOverlay Function](#prepareoverlay-function)
+    - [toggleLoadingSpinner](#toggleloadingspinner)
+    - [moveWithHover Function](#movewithhover-function)
+    - [magnify Fucntion](#magnify-fucntion)
+    - [enableZoomOnHover Function](#enablezoomonhover-function)
+    - [MainSearch Class](#mainsearch-class)
+    - [Media Gallery Class](#media-gallery-class)
+    - [PasswordModal Class](#passwordmodal-class)
+    - [PickupAvailability Class](#pickupavailability-class)
+    - [PredictiveSearch Class](#predictivesearch-class)
+    - [PricePerItem Class](#priceperitem-class)
+    - [ProductForm Class](#productform-class)
+    - [ProductInfo Class](#productinfo-class)
+    - [Breakdown of the product-info Custom Element:](#breakdown-of-the-product-info-custom-element)
+    - [ProductModal Class](#productmodal-class)
+    - [ProductModel Class](#productmodel-class)
+    - [Subscribe Function](#subscribe-function)
+    - [Publish Function](#publish-function)
+    - [QuantityPopover Class](#quantitypopover-class)
+    - [QuickAddBulk Class](#quickaddbulk-class)
+    - [QuickAddModel Class](#quickaddmodel-class)
+    - [QuickOrderListRemoveButton Class](#quickorderlistremovebutton-class)
+    - [QuickOrderListRemoveAllButton Claass](#quickorderlistremoveallbutton-claass)
+    - [QuickOrderList Class](#quickorderlist-class)
+    - [RecipientForm Class](#recipientform-class)
+    - [SearchForm Class](#searchform-class)
+    - [ShareButton Class](#sharebutton-class)
+    - [ShowMore Class](#showmore-class)
+
+<!-- /TOC -->
+
 # Shopify
 Shopify theme guide to create customize theme.
 
-## Create Theme from scratch
+# Create Theme from scratch
 
-### Create Folder
+## Create Folder
 Copy and paste below code in command line to create folders and files
 ```
 mkdir assets, config, layout, locales, sections, snippets, templates
@@ -79,51 +157,10 @@ touch main-account.liquid main-activate_account.liquid main-addresses.liquid mai
 9. Search
 10. 404
 
-## Understanding of global.js file of Dawn Theme
-The global.js file has following functions and classes.
-| S. No | Name | Type | Description |
-| --- | --- | --- | --- |
-| 1 | getFocusableElements | Function | This function help to identify the focusable elements in the given element. In Dawn theme, Default focusable elements are `summary, a[href], button:enabled, [tabindex]:not([tabindex^='-']), [draggable], area, input:not([type=hidden]):enabled, select:enabled, textarea:enabled, object, iframe`. This will be used in `trapFocus` function |
-| 2 | trapFocus | Function | |
-| 3 | focusVisiblePolyfill | Function | |
-| 4 | pauseAllMedia | Function | |
-| 5 | removeTrapFocus | Function | |
-| 6 | onKeyUpEscape | Function | |
-| 7 | QuantityInput | Class | |
-| 8 | debounce | Function | |
-| 9 | throttle | Function | |
-| 10 | fetchConfig | Function | |
-| 11 | Shopify.bind | Function | |
-| 12 | Shopify.setSelectorByValue | Function | |
-| 13 | Shopify.addListener | Function | |
-| 14 | Shopify.postLink | Function | |
-| 15 | Shopify.CountryProvinceSelector | Function | |
-| 16 | Shopify.CountryProvinceSelector.prototype | Object | |
-| 17 | MenuDrawer | Class | |
-| 18 | HeaderDrawer | Class | |
-| 19 | ModalDialog | Class | |
-| 20 | ModalOpener | Class | |
-| 21 | DeferredMedia | Class | |
-| 22 | SliderComponent | Class | |
-| 23 | SlideshowComponent | Class | |
-| 24 | VariantSelects | Class | |
-| 25 | ProductRecommendations | Class | |
 
+# global.js File
 
-# Code and Explanation
-## 1. getFocusableElements Function
-
-The `getFocusableElements` function returns an array of focusable elements within a given container.
-
-### Parameters
-
-- `container`: The DOM element representing the container within which to search for focusable elements.
-
-### Return Value
-
-An array containing the focusable elements found in the container.
-
-### Example Usage
+## getFocusableElements Function
 
 ```javascript
 function getFocusableElements(container) {
@@ -133,35 +170,32 @@ function getFocusableElements(container) {
     )
   );
 }
+```
 
-// Example usage:
+The `getFocusableElements` function returns an array of focusable elements within a given container.
+
+**Parameters**
+
+- `container`: The DOM element representing the container within which to search for focusable elements.
+
+**Return Value**
+
+An array containing the focusable elements found in the container.
+
+**Example Usage**
+
+```javascript
 const containerElement = document.getElementById("my-container");
 const focusableElements = getFocusableElements(containerElement);
 console.log(focusableElements);
 ```
 
 
-## 2.  onKeyUpEscape Function
-
-The `onKeyUpEscape` function handles the "Escape" key press event and performs the following actions:
-
-1. Checks if the pressed key code is "ESCAPE" (case-insensitive).
-2. Finds the closest ancestor `<details>` element that is currently open.
-3. If an open `<details>` element is found:
-   - Removes the "open" attribute from the element.
-   - Sets the `aria-expanded` attribute of the associated `<summary>` element to `false`.
-   - Focuses on the `<summary>` element.
-
-### Parameters
-
-- `event`: The keyup event object containing information about the key press.
-
-### Example Usage
+## onKeyUpEscape Function
 
 ```javascript
 document.addEventListener('keyup', onKeyUpEscape);
 
-// Example usage:
 function onKeyUpEscape(event) {
   if (event.code.toUpperCase() !== 'ESCAPE') return;
 
@@ -175,18 +209,21 @@ function onKeyUpEscape(event) {
 }
 ```
 
-## 3. removeTrapFocus Function
+The `onKeyUpEscape` function handles the "Escape" key press event and performs the following actions:
 
-The `removeTrapFocus` function is responsible for removing event listeners related to trapping focus within a specific context. It performs the following actions:
+1. Checks if the pressed key code is "ESCAPE" (case-insensitive).
+2. Finds the closest ancestor `<details>` element that is currently open.
+3. If an open `<details>` element is found:
+   - Removes the "open" attribute from the element.
+   - Sets the `aria-expanded` attribute of the associated `<summary>` element to `false`.
+   - Focuses on the `<summary>` element.
 
-1. Removes the `focusin`, `focusout`, and `keydown` event listeners associated with trapping focus.
-2. Optionally focuses on a specified element (`elementToFocus`) after removing the event listeners.
+**Parameters**
 
-### Parameters
+- `event`: The keyup event object containing information about the key press.
 
-- `elementToFocus` (optional): The DOM element to focus on after removing the event listeners.
 
-### Example Usage
+## removeTrapFocus Function
 
 ```javascript
 function removeTrapFocus(elementToFocus = null) {
@@ -196,15 +233,25 @@ function removeTrapFocus(elementToFocus = null) {
 
   if (elementToFocus) elementToFocus.focus();
 }
+```
+The `removeTrapFocus` function is responsible for removing event listeners related to trapping focus within a specific context. It performs the following actions:
 
-// Example usage:
+1. Removes the `focusin`, `focusout`, and `keydown` event listeners associated with trapping focus.
+2. Optionally focuses on a specified element (`elementToFocus`) after removing the event listeners.
+
+**Parameters**
+
+- `elementToFocus` (optional): The DOM element to focus on after removing the event listeners.
+
+**Example Usage**
+
+```javascript
 const myButton = document.getElementById('my-button');
 removeTrapFocus(myButton);
 ```
 
-## 4.Accordion with Accessibility
+## Accordion Function
 
-### Accordion Fucntion
 ```javascript
 document.querySelectorAll('[id^="Details-"] summary').forEach((summary) => {
   summary.setAttribute('role', 'button');
@@ -239,7 +286,7 @@ The provided code snippet manipulates the behavior of HTML `<details>` elements 
 4. **Conditional Check:**
    - `if (summary.closest('header-drawer, menu-drawer')) return;`: If the `<summary>` is within a `<header-drawer>` or `<menu-drawer>` (custom elements), the code returns early without further processing.
 
-### Example Usage
+**Example Usage**
 ```html
 <details id="Details-1">
   <summary>Click me to toggle</summary>
@@ -252,8 +299,7 @@ The provided code snippet manipulates the behavior of HTML `<details>` elements 
 </details>
 ```
 
-## 5. Custom Function for Focus Trapping
-## Focus Trapping Code
+## trapFocus Function
 ```javascript
 const trapFocusHandlers = {};
 
@@ -344,7 +390,51 @@ trapFocus(myContainer);
 ```
 
 
-## 6. Custom Function for Focus Visibility Polyfill
+## focusVisiblePolyfill Function
+
+```javascript
+function focusVisiblePolyfill() {
+  const navKeys = [
+    'ARROWUP',
+    'ARROWDOWN',
+    'ARROWLEFT',
+    'ARROWRIGHT',
+    'TAB',
+    'ENTER',
+    'SPACE',
+    'ESCAPE',
+    'HOME',
+    'END',
+    'PAGEUP',
+    'PAGEDOWN',
+  ];
+  let currentFocusedElement = null;
+  let mouseClick = null;
+
+  window.addEventListener('keydown', (event) => {
+    if (navKeys.includes(event.code.toUpperCase())) {
+      mouseClick = false;
+    }
+  });
+
+  window.addEventListener('mousedown', (event) => {
+    mouseClick = true;
+  });
+
+  window.addEventListener(
+    'focus',
+    () => {
+      if (currentFocusedElement) currentFocusedElement.classList.remove('focused');
+
+      if (mouseClick) return;
+
+      currentFocusedElement = document.activeElement;
+      currentFocusedElement.classList.add('focused');
+    },
+    true
+  );
+}
+```
 
 The `focusVisiblePolyfill` function is designed to enhance focus visibility behavior in web applications. It addresses the lack of native support for the `:focus-visible` pseudo-class in certain browsers. Here's how it works:
 
@@ -364,14 +454,14 @@ The `focusVisiblePolyfill` function is designed to enhance focus visibility beha
 4. **Usage**:
    - Include this function in your application to improve focus visibility consistency across different input methods.
 
-## Example Usage
+**Example Usage**
 
 ```javascript
 // Example usage:
 focusVisiblePolyfill();
 ```
 
-## 7. Function to Pause All Media
+## pauseAllMedia Function
 
 ```javascript
 function pauseAllMedia() {
@@ -403,14 +493,14 @@ The `pauseAllMedia` function is designed to pause various types of media element
    - The function targets custom `<product-model>` elements (assuming they have a `modelViewerUI` property).
    - It calls the `.pause()` method on the `modelViewerUI` to pause any 3D model animations.
 
-## Example Usage
+**Example Usage**
 
 ```javascript
 // Example usage:
 pauseAllMedia();
 ```
 
-### 8. Class of Quantity Input
+## QuantityInput Class
 
 ```javascript
 class QuantityInput extends HTMLElement {
@@ -502,7 +592,7 @@ customElements.define('quantity-input', QuantityInput);
    - Validates quantity rules based on min and max values.
    - Updates button states (e.g., disabling the minus button if the value is at the minimum).
 
-  ### Example of Usage
+**Example of Usage**
   ```html
   <quantity-input>
     <input type="number" min="0" max="10" value="5">
@@ -511,7 +601,7 @@ customElements.define('quantity-input', QuantityInput);
 </quantity-input>
 ```
 
-## 9. Debounce Function
+## Debounce Function
 ```javascript
 function debounce(fn, wait) {
   let t;
@@ -542,7 +632,7 @@ It is a common technique used to limit the frequency of function calls. Let's br
      // Example usage:
      window.addEventListener('resize', debouncedFunction);
      ```
-## 10. Throttle Function
+## Throttle Function
 ```javascript
 function throttle(fn, delay) {
   let lastCall = 0;
@@ -623,7 +713,7 @@ The `fetchConfig` function returns an object with configuration options for maki
        });
      ```
 # Shopify Functions
-## 1. Bind Function
+## Bind Function
 ```javascript
 if (typeof window.Shopify == 'undefined') {
   window.Shopify = {};
@@ -652,7 +742,7 @@ This code is related to the Shopify JavaScript library. Let's break it down:
    - You might use this function to ensure that a specific function always executes within a particular context (e.g., a specific object instance).
 
 
-## 2. Set Selector by Value Function
+##  Set Selector by Value Function
 ```javascript
 Shopify.setSelectorByValue = function (selector, value) {
   for (var i = 0, count = selector.options.length; i < count; i++) {
@@ -692,7 +782,7 @@ The `Shopify.setSelectorByValue` function allows us to set the selected option o
      const myDropdown = document.getElementById('myDropdown');
      Shopify.setSelectorByValue(myDropdown, 'banana'); // Selects the "Banana" option
      ```
-## 3. Add Listener Function
+## Add Listener Function
 ```javascript
 Shopify.addListener = function (target, eventName, callback) {
   target.addEventListener
@@ -723,7 +813,7 @@ The `Shopify.addListener` function is a cross-browser utility for attaching even
        // Your custom logic here
      });
      ```
-## 4. Post Link Function
+## Post Link Function
 ```javascript
 Shopify.postLink = function (path, options) {
   options = options || {};
@@ -773,7 +863,7 @@ The `Shopify.postLink` function allows us to create and submit a form dynamicall
      Shopify.postLink(apiUrl, { method: 'post', parameters: data });
      ```
 
-## 5. Country Province Selector
+## Country Province Selector
 ```javascript
 Shopify.CountryProvinceSelector = function (country_domid, province_domid, options) {
   this.countryEl = document.getElementById(country_domid);
@@ -812,7 +902,7 @@ The `Shopify.CountryProvinceSelector` function is part of Shopify's built-in fun
    - You can use this function to create a dynamic country and province selector in your Shopify theme.
    - Ensure that you have appropriate HTML elements with the specified IDs (e.g., `AddressCountryNew`, `AddressProvinceNew`).
 
-## 6. Country Province Selector Prototype
+## Country Province Selector Prototype
 ```javascript
 Shopify.CountryProvinceSelector.prototype = {
   initCountry: function () {
@@ -892,7 +982,7 @@ The code snippet defines the `Shopify.CountryProvinceSelector` prototype, which 
 
 This code is typically used in Shopify themes to create dynamic country and province selectors for address forms.
 
-## 7. Menu Drawer
+## MenuDrawer Class
 ```javascript
 class MenuDrawer extends HTMLElement {
   constructor() {
@@ -1132,7 +1222,7 @@ I'd be glad to explain the code for the `MenuDrawer` component in markdown:
 
 The `MenuDrawer` component provides a mechanism for creating an accessible, animated, and responsive navigation drawer in a web application. It manages the opening and closing of the drawer, submenus, and handles focus trapping to ensure a smooth user experience. The specific behavior can be customized through CSS classes and data attributes on the component itself.
 
-## 8. Header Drawer Class
+## Header Drawer Class
 ```javascript
 class HeaderDrawer extends MenuDrawer {
   constructor() {
@@ -1178,7 +1268,7 @@ class HeaderDrawer extends MenuDrawer {
 
 customElements.define('header-drawer', HeaderDrawer);
 ```
-## Inheritance and Specialization: HeaderDrawer Component
+**Inheritance and Specialization: HeaderDrawer Component**
 
 The `HeaderDrawer` class inherits from the `MenuDrawer` class, providing a more specialized component for handling a header drawer. Here's a breakdown of the code:
 
@@ -1227,7 +1317,7 @@ The `HeaderDrawer` class inherits from the `MenuDrawer` class, providing a more 
 
 The `HeaderDrawer` component extends the `MenuDrawer` component by adding functionalities specific to a header drawer. It manages the positioning of the drawer content relative to the header, handles styling changes during open/close states, and updates the layout on window resize.
 
-## 9. ModalDialog Class
+## ModalDialog Class
 
 ```javascript
 class ModalDialog extends HTMLElement {
@@ -1324,7 +1414,7 @@ This code defines a custom web component named `ModalDialog` that represents a m
 
 The `ModalDialog` component provides a reusable way to create modal dialogs with features like close button handling, escape key support, click on background closing (for specific modal types), focus trapping for accessibility, and potential content loading and media pausing. It can be customized by adding content within the `.template-popup` element and potentially using the `opener` property for tracking purposes.
 
-## 10. Model Opener
+## ModelOpener Class
 ```javascript
 class ModalOpener extends HTMLElement {
   constructor() {
@@ -1364,7 +1454,7 @@ This code defines a custom web component named `ModalOpener` that acts as a butt
 
 The `ModalOpener` component provides a way to associate a button or link with a specific modal dialog. When clicked, it finds the target modal based on a data attribute and calls the `show` method on the modal, potentially passing itself as an argument for tracking purposes. This creates a clean separation between the modal opening logic and the actual modal dialog component, promoting reusability and maintainability.
 
-## 11. DeferredMedia
+## DeferredMedia Class
 ```javascript
 class DeferredMedia extends HTMLElement {
   constructor() {
@@ -1429,7 +1519,7 @@ This code defines a custom web component named `DeferredMedia` used to manage th
 
 The `DeferredMedia` component provides a way to defer the loading of media content until the user interacts with the poster image. This can improve initial page load speed and potentially reduce data usage. The component manages the loading process, including pausing other media players, creating the media element from a template, appending it to the DOM, and optionally focusing on the loaded media for accessibility.
 
-## 12. Slider Component Class
+## SliderComponent Class
 ```javascript
 class SliderComponent extends HTMLElement {
   constructor() {
@@ -1600,7 +1690,7 @@ This code defines a custom web component named `SliderComponent` for creating a 
 
 The `SliderComponent` provides a reusable solution for creating paginated sliders. It calculates the number of visible slides based on viewport size, updates page counters and enables/disables navigation buttons dynamically. It also dispatches custom events to notify other parts of the application about slide changes. The component offers basic looping behavior (commented out) that can potentially be enabled in the future. 
 
-## 13. SlideshowComponent
+## SlideshowComponent Class
 ```javascript
 class SlideshowComponent extends SliderComponent {
   constructor() {
@@ -1952,7 +2042,7 @@ Absolutely, continuing the explanation of the `SlideshowComponent` class:
 
 Overall, the `SlideshowComponent` extends the `SliderComponent` to provide functionalities like autoplay with user interaction controls, announcement bar animations with smooth transitions, and improved accessibility through focus handling and appropriate ARIA attributes. It offers a more interactive and user-friendly experience for presenting a slideshow of content.
 
-## 14. Variant Selector
+## VariantSelect Class
 
 ``` javascript
 class VariantSelects extends HTMLElement {
@@ -2356,7 +2446,7 @@ This code defines a custom web element named `variant-selects`. It appears to be
 
 The `VariantSelects` custom element manages the selection of product variants and updates the product information accordingly. It provides functionalities like updating the URL, managing the "Add to Cart" button state, handling variant availability, and updating product media based on the user's selections. This improves the user experience by dynamically displaying relevant information and enabling actions based on the chosen variant.
 
-## 15. Product Recomendations
+## ProductRecomendations Class
 ```javascript
 class ProductRecommendations extends HTMLElement {
   constructor() {
@@ -2398,8 +2488,7 @@ class ProductRecommendations extends HTMLElement {
 
 customElements.define('product-recommendations', ProductRecommendations);
 ```
-
-## ProductRecommendations Custom Element Explained
+**ProductRecommendations Custom Element Explained**
 
 This code defines a custom web element named `product-recommendations`. It appears to be used for lazy-loading product recommendations on an e-commerce website. Here's a breakdown of its functionalities:
 
@@ -2435,7 +2524,7 @@ This code defines a custom web element named `product-recommendations`. It appea
 
 The `ProductRecommendations` custom element uses Intersection Observer to efficiently load product recommendations. It fetches data from a specified URL only when the element becomes visible within a certain distance from the bottom of the viewport. This improves website performance by avoiding unnecessary data loading until it's likely to be seen by the user. Additionally, it handles scenarios where complementary products might not be desired or when the data retrieval fails.
 
-## 16. Account Icon
+## Account Icon
 ```javascript
 class AccountIcon extends HTMLElement {
   constructor() {
@@ -2485,7 +2574,7 @@ This code defines a custom web element named `account-icon`. It appears to be us
 
 The `AccountIcon` custom element listens for a `storefront:signincompleted` event and updates the account icon with the user's avatar if available. This provides a more personalized user experience by displaying the user's avatar after signing in.
 
-## 17. FacetFiltersForm Class
+## FacetFiltersForm Class
 
 ```javascript
 class FacetFiltersForm extends HTMLElement {
@@ -2865,7 +2954,7 @@ This code defines a custom web element named `FacetFiltersForm`. It appears to b
 
 Overall, the `FacetFiltersForm` custom element provides a comprehensive solution for managing dynamic product filtering and updates on an e-commerce website. It offers a user-friendly experience by allowing for interactive filter selections, real-time product grid updates, and URL synchronization to reflect the current filter state.
 
-## 18. Price Range Class
+## Price Range Class
 ```javascript
 class PriceRange extends HTMLElement {
   constructor() {
@@ -2911,7 +3000,7 @@ class PriceRange extends HTMLElement {
 
 customElements.define('price-range', PriceRange);
 ```
-## PriceRange Custom Element Explained
+**PriceRange Custom Element Explained**
 
 This code defines a custom web element named `price-range`. It appears to be used for creating a dynamic price range selection component on a website, likely for product filtering. Here's a breakdown of its functionalities:
 
@@ -2965,7 +3054,7 @@ This code defines a custom web element named `price-range`. It appears to be use
 
 The `PriceRange` custom element provides a user-friendly and interactive way for users to select a price range for filtering products or other similar use cases. It enforces data validation to ensure users enter valid numeric values and dynamically adjusts the allowed range for each input field based on the other, creating a cohesive and intuitive price selection experience.
 
-## 19. FacetRemove Class
+## FacetRemove Class
 ```javascript
 class FacetRemove extends HTMLElement {
   constructor() {
@@ -3014,7 +3103,8 @@ This code defines a custom web element named `facet-remove`. It represents a cli
 
 The `FacetRemove` custom element provides a user-friendly way to remove individual filters from the active filter section. It leverages event delegation to trigger the appropriate logic within the parent `FacetFiltersForm` component, promoting code reusability and maintainability.
 
-## 20. constant.js
+# constant.js
+## PUB_SUB_EVENTS
 ```javascript
 const ON_CHANGE_DEBOUNCE_TIMER = 300;
 
@@ -3026,7 +3116,7 @@ const PUB_SUB_EVENTS = {
 };
 ```
 
-## 21. Customer Address Class
+#  CustomerAddress Class
 ```javascript
 const selectors = {
   customerAddresses: '[data-customer-addresses]',
@@ -3168,7 +3258,7 @@ This code defines a JavaScript class named `CustomerAddresses`. It appears to ma
 
 The `CustomerAddresses` class provides a well-structured solution for managing customer addresses on a Shopify storefront. It utilizes Shopify's built-in functionalities for country and province selection and offers a user-friendly experience for adding, editing, and deleting customer addresses.
 
-## 22. DetailsDisclosure Class
+## DetailsDisclosure Class
 ```javascript
 class DetailsDisclosure extends HTMLElement {
   constructor() {
@@ -3240,7 +3330,7 @@ This code defines a custom web element named `details-disclosure`. It appears to
 
 The `DetailsDisclosure` custom element enhances the usability and accessibility of the native `<details>` element. It provides automatic closing behavior based on focus management and integrates with CSS animations for a more polished user experience.
 
-## 23. HeaderMenu Class
+## HeaderMenu Class
 ```javascript
 class HeaderMenu extends DetailsDisclosure {
   constructor() {
@@ -3592,7 +3682,7 @@ if (!customElements.get('localization-form')) {
   );
 }
 ```
-## Detailed Explanation of the `localization-form` Code
+**Detailed Explanation of the `localization-form` Code**
 
 This code defines a custom web component named `localization-form` specifically designed to manage a form for selecting a user's locale and country. Here's a breakdown of the code with more details:
 
@@ -4053,6 +4143,114 @@ The provided code defines a custom web component named `MainSearch` that inherit
 Overall, the `MainSearch` custom component provides a reusable solution for keeping the values of multiple search inputs in sync on a web page. It inherits functionalities from a base class (`SearchForm`) for handling search forms and adds logic to synchronize input values based on user interactions like typing, resetting forms, and focusing on specific inputs. It also considers the screen size for smoother user experience on mobile devices.
 
 ## Media Gallery Class
+```javascript
+if (!customElements.get('media-gallery')) {
+  customElements.define(
+    'media-gallery',
+    class MediaGallery extends HTMLElement {
+      constructor() {
+        super();
+        this.elements = {
+          liveRegion: this.querySelector('[id^="GalleryStatus"]'),
+          viewer: this.querySelector('[id^="GalleryViewer"]'),
+          thumbnails: this.querySelector('[id^="GalleryThumbnails"]'),
+        };
+        this.mql = window.matchMedia('(min-width: 750px)');
+        if (!this.elements.thumbnails) return;
+
+        this.elements.viewer.addEventListener('slideChanged', debounce(this.onSlideChanged.bind(this), 500));
+        this.elements.thumbnails.querySelectorAll('[data-target]').forEach((mediaToSwitch) => {
+          mediaToSwitch
+            .querySelector('button')
+            .addEventListener('click', this.setActiveMedia.bind(this, mediaToSwitch.dataset.target));
+        });
+        if (this.dataset.desktopLayout.includes('thumbnail') && this.mql.matches) this.removeListSemantic();
+      }
+
+      onSlideChanged(event) {
+        const thumbnail = this.elements.thumbnails.querySelector(
+          `[data-target="${event.detail.currentElement.dataset.mediaId}"]`
+        );
+        this.setActiveThumbnail(thumbnail);
+      }
+
+      setActiveMedia(mediaId) {
+        const activeMedia =
+          this.elements.viewer.querySelector(`[data-media-id="${mediaId}"]`) ||
+          this.elements.viewer.querySelector('[data-media-id]');
+        if (!activeMedia) {
+          return;
+        }
+        this.elements.viewer.querySelectorAll('[data-media-id]').forEach((element) => {
+          element.classList.remove('is-active');
+        });
+        activeMedia?.classList?.add('is-active');
+
+        this.preventStickyHeader();
+        window.setTimeout(() => {
+          if (!this.mql.matches || this.elements.thumbnails) {
+            activeMedia.parentElement.scrollTo({ left: activeMedia.offsetLeft });
+          }
+          const activeMediaRect = activeMedia.getBoundingClientRect();
+          // Don't scroll if the image is already in view
+          if (activeMediaRect.top > -0.5) return;
+          const top = activeMediaRect.top + window.scrollY;
+          window.scrollTo({ top: top, behavior: 'smooth' });
+        });
+        this.playActiveMedia(activeMedia);
+
+        if (!this.elements.thumbnails) return;
+        const activeThumbnail = this.elements.thumbnails.querySelector(`[data-target="${mediaId}"]`);
+        this.setActiveThumbnail(activeThumbnail);
+        this.announceLiveRegion(activeMedia, activeThumbnail.dataset.mediaPosition);
+      }
+
+      setActiveThumbnail(thumbnail) {
+        if (!this.elements.thumbnails || !thumbnail) return;
+
+        this.elements.thumbnails
+          .querySelectorAll('button')
+          .forEach((element) => element.removeAttribute('aria-current'));
+        thumbnail.querySelector('button').setAttribute('aria-current', true);
+        if (this.elements.thumbnails.isSlideVisible(thumbnail, 10)) return;
+
+        this.elements.thumbnails.slider.scrollTo({ left: thumbnail.offsetLeft });
+      }
+
+      announceLiveRegion(activeItem, position) {
+        const image = activeItem.querySelector('.product__modal-opener--image img');
+        if (!image) return;
+        image.onload = () => {
+          this.elements.liveRegion.setAttribute('aria-hidden', false);
+          this.elements.liveRegion.innerHTML = window.accessibilityStrings.imageAvailable.replace('[index]', position);
+          setTimeout(() => {
+            this.elements.liveRegion.setAttribute('aria-hidden', true);
+          }, 2000);
+        };
+        image.src = image.src;
+      }
+
+      playActiveMedia(activeItem) {
+        window.pauseAllMedia();
+        const deferredMedia = activeItem.querySelector('.deferred-media');
+        if (deferredMedia) deferredMedia.loadContent(false);
+      }
+
+      preventStickyHeader() {
+        this.stickyHeader = this.stickyHeader || document.querySelector('sticky-header');
+        if (!this.stickyHeader) return;
+        this.stickyHeader.dispatchEvent(new Event('preventHeaderReveal'));
+      }
+
+      removeListSemantic() {
+        if (!this.elements.viewer.slider) return;
+        this.elements.viewer.slider.setAttribute('role', 'presentation');
+        this.elements.viewer.sliderItems.forEach((slide) => slide.setAttribute('role', 'presentation'));
+      }
+    }
+  );
+}
+```
 The provided code defines a custom web component named `media-gallery` using JavaScript classes and the Custom Elements API. Here's a breakdown of its functionality:
 
 **Checking for Existing Custom Element:**
@@ -4851,7 +5049,7 @@ if (!customElements.get('price-per-item')) {
   );
 }
 ```
-## Breakdown of the code for 'price-per-item' custom element:
+**Breakdown of the code for 'price-per-item' custom element:**
 
 This code defines a custom web component named `price-per-item`. This component is likely used on an e-commerce website to display the price per item based on the quantity purchased and potential volume discounts.
 
@@ -5357,7 +5555,7 @@ if (!customElements.get('product-modal')) {
   );
 }
 ```
-## Breakdown of the `product-modal` Custom Element:
+**Breakdown of the `product-modal` Custom Element:**
 
 This code defines a custom element named `product-modal` that extends the `ModalDialog` class (presumably defined elsewhere) and manages the behavior of a product modal on an e-commerce website.
 
@@ -5398,7 +5596,7 @@ This code defines a custom element named `product-modal` that extends the `Modal
 
 This code defines a reusable `product-modal` custom element that inherits functionalities from a base `ModalDialog` class. It focuses on showing the appropriate media content within the product modal based on the element that triggered the modal opening. It also handles centering the media horizontally and potentially lazy-loads YouTube content if necessary.
 
-## Product Model Class
+## ProductModel Class
 ```javascript
 if (!customElements.get('product-model')) {
   customElements.define(
