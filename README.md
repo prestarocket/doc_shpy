@@ -4403,3 +4403,3081 @@ The two custom components, `pickup-availability` and `pickup-availability-drawer
 **Conditional Registration:**
 
 Both components are defined using `customElements.define` only if the corresponding element name (`pickup-availability` or `pickup-availability-drawer`) hasn't been registered yet using `customElements.get`. This ensures they are defined only once, even if the code is included multiple times on a page.
+
+## PredictiveSearch Class
+```javascript
+class PredictiveSearch extends SearchForm {
+  constructor() {
+    super();
+    this.cachedResults = {};
+    this.predictiveSearchResults = this.querySelector('[data-predictive-search]');
+    this.allPredictiveSearchInstances = document.querySelectorAll('predictive-search');
+    this.isOpen = false;
+    this.abortController = new AbortController();
+    this.searchTerm = '';
+
+    this.setupEventListeners();
+  }
+
+  setupEventListeners() {
+    this.input.form.addEventListener('submit', this.onFormSubmit.bind(this));
+
+    this.input.addEventListener('focus', this.onFocus.bind(this));
+    this.addEventListener('focusout', this.onFocusOut.bind(this));
+    this.addEventListener('keyup', this.onKeyup.bind(this));
+    this.addEventListener('keydown', this.onKeydown.bind(this));
+  }
+
+  getQuery() {
+    return this.input.value.trim();
+  }
+
+  onChange() {
+    super.onChange();
+    const newSearchTerm = this.getQuery();
+    if (!this.searchTerm || !newSearchTerm.startsWith(this.searchTerm)) {
+      // Remove the results when they are no longer relevant for the new search term
+      // so they don't show up when the dropdown opens again
+      this.querySelector('#predictive-search-results-groups-wrapper')?.remove();
+    }
+
+    // Update the term asap, don't wait for the predictive search query to finish loading
+    this.updateSearchForTerm(this.searchTerm, newSearchTerm);
+
+    this.searchTerm = newSearchTerm;
+
+    if (!this.searchTerm.length) {
+      this.close(true);
+      return;
+    }
+
+    this.getSearchResults(this.searchTerm);
+  }
+
+  onFormSubmit(event) {
+    if (!this.getQuery().length || this.querySelector('[aria-selected="true"] a')) event.preventDefault();
+  }
+
+  onFormReset(event) {
+    super.onFormReset(event);
+    if (super.shouldResetForm()) {
+      this.searchTerm = '';
+      this.abortController.abort();
+      this.abortController = new AbortController();
+      this.closeResults(true);
+    }
+  }
+
+  onFocus() {
+    const currentSearchTerm = this.getQuery();
+
+    if (!currentSearchTerm.length) return;
+
+    if (this.searchTerm !== currentSearchTerm) {
+      // Search term was changed from other search input, treat it as a user change
+      this.onChange();
+    } else if (this.getAttribute('results') === 'true') {
+      this.open();
+    } else {
+      this.getSearchResults(this.searchTerm);
+    }
+  }
+
+  onFocusOut() {
+    setTimeout(() => {
+      if (!this.contains(document.activeElement)) this.close();
+    });
+  }
+
+  onKeyup(event) {
+    if (!this.getQuery().length) this.close(true);
+    event.preventDefault();
+
+    switch (event.code) {
+      case 'ArrowUp':
+        this.switchOption('up');
+        break;
+      case 'ArrowDown':
+        this.switchOption('down');
+        break;
+      case 'Enter':
+        this.selectOption();
+        break;
+    }
+  }
+
+  onKeydown(event) {
+    // Prevent the cursor from moving in the input when using the up and down arrow keys
+    if (event.code === 'ArrowUp' || event.code === 'ArrowDown') {
+      event.preventDefault();
+    }
+  }
+
+  updateSearchForTerm(previousTerm, newTerm) {
+    const searchForTextElement = this.querySelector('[data-predictive-search-search-for-text]');
+    const currentButtonText = searchForTextElement?.innerText;
+    if (currentButtonText) {
+      if (currentButtonText.match(new RegExp(previousTerm, 'g')).length > 1) {
+        // The new term matches part of the button text and not just the search term, do not replace to avoid mistakes
+        return;
+      }
+      const newButtonText = currentButtonText.replace(previousTerm, newTerm);
+      searchForTextElement.innerText = newButtonText;
+    }
+  }
+
+  switchOption(direction) {
+    if (!this.getAttribute('open')) return;
+
+    const moveUp = direction === 'up';
+    const selectedElement = this.querySelector('[aria-selected="true"]');
+
+    // Filter out hidden elements (duplicated page and article resources) thanks
+    // to this https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/offsetParent
+    const allVisibleElements = Array.from(this.querySelectorAll('li, button.predictive-search__item')).filter(
+      (element) => element.offsetParent !== null
+    );
+    let activeElementIndex = 0;
+
+    if (moveUp && !selectedElement) return;
+
+    let selectedElementIndex = -1;
+    let i = 0;
+
+    while (selectedElementIndex === -1 && i <= allVisibleElements.length) {
+      if (allVisibleElements[i] === selectedElement) {
+        selectedElementIndex = i;
+      }
+      i++;
+    }
+
+    this.statusElement.textContent = '';
+
+    if (!moveUp && selectedElement) {
+      activeElementIndex = selectedElementIndex === allVisibleElements.length - 1 ? 0 : selectedElementIndex + 1;
+    } else if (moveUp) {
+      activeElementIndex = selectedElementIndex === 0 ? allVisibleElements.length - 1 : selectedElementIndex - 1;
+    }
+
+    if (activeElementIndex === selectedElementIndex) return;
+
+    const activeElement = allVisibleElements[activeElementIndex];
+
+    activeElement.setAttribute('aria-selected', true);
+    if (selectedElement) selectedElement.setAttribute('aria-selected', false);
+
+    this.input.setAttribute('aria-activedescendant', activeElement.id);
+  }
+
+  selectOption() {
+    const selectedOption = this.querySelector('[aria-selected="true"] a, button[aria-selected="true"]');
+
+    if (selectedOption) selectedOption.click();
+  }
+
+  getSearchResults(searchTerm) {
+    const queryKey = searchTerm.replace(' ', '-').toLowerCase();
+    this.setLiveRegionLoadingState();
+
+    if (this.cachedResults[queryKey]) {
+      this.renderSearchResults(this.cachedResults[queryKey]);
+      return;
+    }
+
+    fetch(`${routes.predictive_search_url}?q=${encodeURIComponent(searchTerm)}&section_id=predictive-search`, {
+      signal: this.abortController.signal,
+    })
+      .then((response) => {
+        if (!response.ok) {
+          var error = new Error(response.status);
+          this.close();
+          throw error;
+        }
+
+        return response.text();
+      })
+      .then((text) => {
+        const resultsMarkup = new DOMParser()
+          .parseFromString(text, 'text/html')
+          .querySelector('#shopify-section-predictive-search').innerHTML;
+        // Save bandwidth keeping the cache in all instances synced
+        this.allPredictiveSearchInstances.forEach((predictiveSearchInstance) => {
+          predictiveSearchInstance.cachedResults[queryKey] = resultsMarkup;
+        });
+        this.renderSearchResults(resultsMarkup);
+      })
+      .catch((error) => {
+        if (error?.code === 20) {
+          // Code 20 means the call was aborted
+          return;
+        }
+        this.close();
+        throw error;
+      });
+  }
+
+  setLiveRegionLoadingState() {
+    this.statusElement = this.statusElement || this.querySelector('.predictive-search-status');
+    this.loadingText = this.loadingText || this.getAttribute('data-loading-text');
+
+    this.setLiveRegionText(this.loadingText);
+    this.setAttribute('loading', true);
+  }
+
+  setLiveRegionText(statusText) {
+    this.statusElement.setAttribute('aria-hidden', 'false');
+    this.statusElement.textContent = statusText;
+
+    setTimeout(() => {
+      this.statusElement.setAttribute('aria-hidden', 'true');
+    }, 1000);
+  }
+
+  renderSearchResults(resultsMarkup) {
+    this.predictiveSearchResults.innerHTML = resultsMarkup;
+    this.setAttribute('results', true);
+
+    this.setLiveRegionResults();
+    this.open();
+  }
+
+  setLiveRegionResults() {
+    this.removeAttribute('loading');
+    this.setLiveRegionText(this.querySelector('[data-predictive-search-live-region-count-value]').textContent);
+  }
+
+  getResultsMaxHeight() {
+    this.resultsMaxHeight =
+      window.innerHeight - document.querySelector('.section-header').getBoundingClientRect().bottom;
+    return this.resultsMaxHeight;
+  }
+
+  open() {
+    this.predictiveSearchResults.style.maxHeight = this.resultsMaxHeight || `${this.getResultsMaxHeight()}px`;
+    this.setAttribute('open', true);
+    this.input.setAttribute('aria-expanded', true);
+    this.isOpen = true;
+  }
+
+  close(clearSearchTerm = false) {
+    this.closeResults(clearSearchTerm);
+    this.isOpen = false;
+  }
+
+  closeResults(clearSearchTerm = false) {
+    if (clearSearchTerm) {
+      this.input.value = '';
+      this.removeAttribute('results');
+    }
+    const selected = this.querySelector('[aria-selected="true"]');
+
+    if (selected) selected.setAttribute('aria-selected', false);
+
+    this.input.setAttribute('aria-activedescendant', '');
+    this.removeAttribute('loading');
+    this.removeAttribute('open');
+    this.input.setAttribute('aria-expanded', false);
+    this.resultsMaxHeight = false;
+    this.predictiveSearchResults.removeAttribute('style');
+  }
+}
+
+customElements.define('predictive-search', PredictiveSearch);
+```
+The provided code defines a custom web component named `predictive-search` that extends a base class `SearchForm` (not shown here). This component enhances a search input element with features like:
+
+**Predictive Search Suggestions:**
+
+- It displays a dropdown list of suggested search terms as the user types in the input field.
+- It leverages caching to avoid redundant API calls for previously searched terms across all instances of this component on the page.
+
+**Keyboard Navigation:**
+
+- Users can navigate through the suggested search terms using the up and down arrow keys.
+- Selecting a suggestion with the Enter key triggers the search.
+
+**Accessibility:**
+
+- It uses appropriate ARIA attributes (`aria-selected`, `aria-activedescendant`) to indicate the selected suggestion and maintain focus within the dropdown.
+- It utilizes a live region to announce loading state and the number of search results to screen readers.
+
+**Overall Breakdown:**
+
+The `PredictiveSearch` component can be broken down into these functionalities:
+
+- **Class Definition and Inheritance:**
+  - It inherits functionalities from a base class `SearchForm`, likely handling basic search input behavior.
+- **Constructor:**
+  - Initializes properties like `cachedResults` (to store search term -> results cache), references to DOM elements, and an `AbortController` for managing network requests.
+  - Calls `setupEventListeners` to attach event listeners for various interactions.
+- **Event Listeners:**
+  - Handles form submission, reset, focus, focus out, keyup, and keydown events on the search input and itself.
+- **`getQuery()`:** Retrieves the current search term from the input value.
+- **`onChange()`:**
+  - Called when the search term changes in the input.
+    - Clears previously displayed results if the new term doesn't start with the previous term.
+    - Updates the displayed search term for a button element within the component.
+    - Fetches search results if the term has length (isn't empty).
+- **Form Related Event Handlers:**
+  - `onFormSubmit` - Prevents form submission if there's no search term or a suggestion is already selected.
+  - `onFormReset` - Resets the search term, aborts any ongoing search request, and closes the results dropdown.
+- **Focus Related Event Handlers:**
+  - `onFocus` - Opens the dropdown if the input is focused and has a search term.
+  - `onFocusOut` - Closes the dropdown after a slight delay if focus leaves the component and its children.
+- **Keyboard Event Handlers:**
+  - `onKeyup` - Handles up/down arrow keys for navigation, Enter key for selecting a suggestion, and prevents default input cursor movement.
+  - `onKeydown` - Prevents default behavior for up/down arrow keys to avoid scrolling the page.
+- **`updateSearchForTerm()`:** Updates the displayed search term for a button element within the component based on the previous and new search term.
+- **`switchOption()`:** Handles up/down arrow key navigation within the displayed search suggestions.
+- **`selectOption()`:** Triggers a click event on the currently selected search suggestion.
+- **`getSearchResults()`:**
+  - Fetches search results from a server endpoint based on the search term.
+  - Caches the results for later reuse.
+  - Renders the retrieved search results in the dropdown.
+- **Live Region Management:**
+  - `setLiveRegionLoadingState` - Sets the live region text to indicate loading when a search is initiated.
+  - `setLiveRegionText` - Sets the text content of the live region element for announcements.
+  - `setLiveRegionResults` - Sets the live region text to announce the number of search results.
+- **`getResultsMaxHeight()`:** Calculates the maximum height available for the dropdown based on the window height and other elements on the page.
+- **`open()`:** Opens the dropdown with appropriate styling and ARIA attributes.
+- **`close()`:** Closes the dropdown, optionally clearing the search term and resetting ARIA attributes.
+- **`closeResults()`:** Performs the core closing logic for the dropdown, including resetting attributes and styles.
+
+Overall, the `PredictiveSearch` component provides a user-friendly and accessible search experience with features like suggestions, keyboard navigation, and clear communication with assistive technologies.
+
+## PricePerItem Class
+```javascript
+if (!customElements.get('price-per-item')) {
+  customElements.define(
+    'price-per-item',
+    class PricePerItem extends HTMLElement {
+      constructor() {
+        super();
+        this.variantId = this.dataset.variantId;
+        this.input = document.getElementById(`Quantity-${this.dataset.sectionId || this.dataset.variantId}`);
+        if (this.input) {
+          this.input.addEventListener('change', this.onInputChange.bind(this));
+        }
+
+        this.getVolumePricingArray();
+      }
+
+      updatePricePerItemUnsubscriber = undefined;
+      variantIdChangedUnsubscriber = undefined;
+
+      connectedCallback() {
+        // Update variantId if variant is switched on product page
+        this.variantIdChangedUnsubscriber = subscribe(PUB_SUB_EVENTS.variantChange, (event) => {
+          this.variantId = event.data.variant.id.toString();
+          this.getVolumePricingArray();
+        });
+
+        this.updatePricePerItemUnsubscriber = subscribe(PUB_SUB_EVENTS.cartUpdate, (response) => {
+          if (!response.cartData) return;
+
+          // Item was added to cart via product page
+          if (response.cartData['variant_id'] !== undefined) {
+            if (response.productVariantId === this.variantId) this.updatePricePerItem(response.cartData.quantity);
+            // Qty was updated in cart
+          } else if (response.cartData.item_count !== 0) {
+            const isVariant = response.cartData.items.find((item) => item.variant_id.toString() === this.variantId);
+            if (isVariant && isVariant.id.toString() === this.variantId) {
+              // The variant is still in cart
+              this.updatePricePerItem(isVariant.quantity);
+            } else {
+              // The variant was removed from cart, qty is 0
+              this.updatePricePerItem(0);
+            }
+            // All items were removed from cart
+          } else {
+            this.updatePricePerItem(0);
+          }
+        });
+      }
+
+      disconnectedCallback() {
+        if (this.updatePricePerItemUnsubscriber) {
+          this.updatePricePerItemUnsubscriber();
+        }
+        if (this.variantIdChangedUnsubscriber) {
+          this.variantIdChangedUnsubscriber();
+        }
+      }
+
+      onInputChange() {
+        this.updatePricePerItem();
+      }
+
+      updatePricePerItem(updatedCartQuantity) {
+        if (this.input) {
+          this.enteredQty = parseInt(this.input.value);
+          this.step = parseInt(this.input.step)
+        }
+
+        // updatedCartQuantity is undefined when qty is updated on product page. We need to sum entered qty and current qty in cart.
+        // updatedCartQuantity is not undefined when qty is updated in cart. We need to sum qty in cart and min qty for product.
+        this.currentQtyForVolumePricing = updatedCartQuantity === undefined ? this.getCartQuantity(updatedCartQuantity) + this.enteredQty : this.getCartQuantity(updatedCartQuantity) + parseInt(this.step);
+
+        if (this.classList.contains('variant-item__price-per-item')) {
+          this.currentQtyForVolumePricing = this.getCartQuantity(updatedCartQuantity);
+        }
+        for (let pair of this.qtyPricePairs) {
+          if (this.currentQtyForVolumePricing >= pair[0]) {
+            const pricePerItemCurrent = document.querySelector(`price-per-item[id^="Price-Per-Item-${this.dataset.sectionId || this.dataset.variantId}"] .price-per-item span`);
+            this.classList.contains('variant-item__price-per-item') ? pricePerItemCurrent.innerHTML = window.quickOrderListStrings.each.replace('[money]', pair[1]) : pricePerItemCurrent.innerHTML = pair[1];
+            break;
+          }
+        }
+      }
+
+      getCartQuantity(updatedCartQuantity) {
+        return (updatedCartQuantity || updatedCartQuantity === 0) ? updatedCartQuantity : parseInt(this.input.dataset.cartQuantity);
+      }
+
+      getVolumePricingArray() {
+        const volumePricing = document.getElementById(`Volume-${this.dataset.sectionId || this.dataset.variantId}`);
+        this.qtyPricePairs = [];
+
+        if (volumePricing) {
+          volumePricing.querySelectorAll('li').forEach(li => {
+            const qty = parseInt(li.querySelector('span:first-child').textContent);
+            const price = (li.querySelector('span:not(:first-child):last-child').dataset.text);
+            this.qtyPricePairs.push([qty, price]);
+          });
+        }
+        this.qtyPricePairs.reverse();
+      }
+    }
+  );
+}
+```
+## Breakdown of the code for 'price-per-item' custom element:
+
+This code defines a custom web component named `price-per-item`. This component is likely used on an e-commerce website to display the price per item based on the quantity purchased and potential volume discounts.
+
+Here's a detailed explanation of the code:
+
+**1. Registration and Class Definition:**
+
+- The code first checks if a custom element named `price-per-item` is already defined using `customElements.get`. 
+- If not defined, it defines a new class named `PricePerItem` that extends `HTMLElement`. This class represents the `price-per-item` component.
+
+**2. Constructor (`constructor`):**
+
+- The constructor is called when a new instance of the `PricePerItem` class is created.
+  - It calls the `super()` constructor to inherit properties and methods from the `HTMLElement` class.
+  - It retrieves the `variantId` from the `data-variantId` attribute of the element using `this.dataset.variantId`.
+  - It tries to find an input element with an ID matching the format `Quantity-${sectionId || variantId}` using `document.getElementById`. This input element is likely where the user enters the quantity they want to purchase.
+  - If the input element is found, an event listener is attached to the `change` event of the input using `addEventListener`. The listener calls the `onInputChange` method when the quantity changes.
+  - Finally, the `getVolumePricingArray` method is called to retrieve volume pricing information (explained later).
+
+**3. Unsubscriber Properties:**
+
+- `updatePricePerItemUnsubscriber` and `variantIdChangedUnsubscriber` are declared but not initialized yet. These will hold unsubscribe functions for event listeners later.
+
+**4. `connectedCallback`:**
+
+- This method is called when the element is inserted into the DOM.
+  - It subscribes to two events using a function named `subscribe` (assumed to be defined elsewhere).
+    - The first event is `PUB_SUB_EVENTS.variantChange`. This likely indicates a change in the selected variant on the product page. The callback function updates the `variantId` and calls `getVolumePricingArray` to refresh the pricing based on the new variant.
+    - The second event is `PUB_SUB_EVENTS.cartUpdate`. This likely indicates an update to the shopping cart. The callback function checks the response data:
+      - If `cartData['variant_id']` is defined, it means an item was added/updated directly from the product page. It checks if the variant ID matches the current component's variant and updates the price per item based on the new quantity.
+      - If `cartData.item_count` is not zero, it iterates through the cart items to find the matching variant and updates the price per item based on its quantity. If the variant is not found, it assumes the variant was removed and sets the price to zero.
+      - If `cartData.item_count` is zero, it assumes all items were removed from the cart and sets the price to zero.
+
+**5. `disconnectedCallback`:**
+
+- This method is called when the element is removed from the DOM.
+  - It calls the unsubscribe functions stored in `updatePricePerItemUnsubscriber` and `variantIdChangedUnsubscriber` to clean up event listeners and prevent memory leaks.
+
+**6. `onInputChange`:**
+
+- This method is called when the user changes the quantity in the input element.
+  - It calls the `updatePricePerItem` method to recalculate and display the price per item based on the new quantity.
+
+**7. `updatePricePerItem`:**
+
+- This method takes an optional `updatedCartQuantity` parameter.
+  - It retrieves the entered quantity from the input element and the step value (likely for quantity increment/decrement).
+  - It calculates the current quantity for volume pricing based on two scenarios:
+    - If `updatedCartQuantity` is undefined (meaning quantity change happened on the product page), it adds the entered quantity to the existing cart quantity retrieved using `getCartQuantity`.
+    - If `updatedCartQuantity` is defined (meaning quantity change happened in the cart), it adds the `updatedCartQuantity` (which might be the new total quantity) to the minimum quantity allowed for the product (assumed to be stored in `step`).
+  - There's an additional check for a CSS class `variant-item__price-per-item`. If present, it seems to prioritize using the existing cart quantity for volume pricing calculation.
+  - It iterates through the `qtyPricePairs` array (explained later). For each pair (quantity, price), it checks if the current quantity is greater than or equal to the `currentQtyForVolumePricing`
+  - It checks if the current quantity is greater than or equal to the quantity in the current `qtyPricePairs` pair.
+    - If it is, it finds the element displaying the price per item using a selector based on the `dataset.sectionId` or `variantId` and the class `price-per-item span`.
+    - Depending on the presence of the CSS class `variant-item__price-per-item`, it either replaces the inner HTML of the element with the price from the current `qtyPricePairs` pair or uses a formatted string with the price value from `window.quickOrderListStrings.each`. This suggests displaying the price with a label like "each".
+    - The loop breaks after finding the first matching quantity tier.
+
+**8. `getCartQuantity`:**
+
+- This method takes an optional `updatedCartQuantity` parameter.
+  - It checks if `updatedCartQuantity` is defined and not zero. If so, it returns that value directly.
+  - Otherwise, it retrieves the `cartQuantity` value from the `data-cartQuantity` attribute of the input element (presumably set elsewhere).
+  - This method ensures using the provided `updatedCartQuantity` if available, otherwise falling back to the quantity stored in the input element's data attribute.
+
+**9. `getVolumePricingArray`:**
+
+- This method retrieves volume pricing information from the DOM.
+  - It finds an element with the ID matching the format `Volume-${sectionId || variantId}` using `document.getElementById`. This element likely holds the volume pricing details.
+  - It initializes an empty array `qtyPricePairs` to store quantity-price pairs.
+  - If the volume pricing element is found, it iterates through all list items (`li`) within it.
+    - For each list item, it extracts the quantity from the first child `span` element and the price from the `data-text` attribute of the last child `span` (excluding the first child).
+    - It adds a pair containing the extracted quantity and price to the `qtyPricePairs` array.
+  - Finally, it reverses the `qtyPricePairs` array so that the highest quantity tier is checked first in the `updatePricePerItem` method.
+
+**Overall:**
+
+This code defines a reusable custom element that manages the display of price per item based on the selected variant, entered quantity, and potential volume discounts. It listens for changes in the selected variant and updates in the shopping cart to keep the displayed price accurate and reflect the current situation.
+
+## ProductForm Class
+```javascript
+if (!customElements.get('product-form')) {
+  customElements.define(
+    'product-form',
+    class ProductForm extends HTMLElement {
+      constructor() {
+        super();
+
+        this.form = this.querySelector('form');
+        this.form.querySelector('[name=id]').disabled = false;
+        this.form.addEventListener('submit', this.onSubmitHandler.bind(this));
+        this.cart = document.querySelector('cart-notification') || document.querySelector('cart-drawer');
+        this.submitButton = this.querySelector('[type="submit"]');
+
+        if (document.querySelector('cart-drawer')) this.submitButton.setAttribute('aria-haspopup', 'dialog');
+
+        this.hideErrors = this.dataset.hideErrors === 'true';
+      }
+
+      onSubmitHandler(evt) {
+        evt.preventDefault();
+        if (this.submitButton.getAttribute('aria-disabled') === 'true') return;
+
+        this.handleErrorMessage();
+
+        this.submitButton.setAttribute('aria-disabled', true);
+        this.submitButton.classList.add('loading');
+        this.querySelector('.loading__spinner').classList.remove('hidden');
+
+        const config = fetchConfig('javascript');
+        config.headers['X-Requested-With'] = 'XMLHttpRequest';
+        delete config.headers['Content-Type'];
+
+        const formData = new FormData(this.form);
+        if (this.cart) {
+          formData.append(
+            'sections',
+            this.cart.getSectionsToRender().map((section) => section.id)
+          );
+          formData.append('sections_url', window.location.pathname);
+          this.cart.setActiveElement(document.activeElement);
+        }
+        config.body = formData;
+
+        fetch(`${routes.cart_add_url}`, config)
+          .then((response) => response.json())
+          .then((response) => {
+            if (response.status) {
+              publish(PUB_SUB_EVENTS.cartError, {
+                source: 'product-form',
+                productVariantId: formData.get('id'),
+                errors: response.errors || response.description,
+                message: response.message,
+              });
+              this.handleErrorMessage(response.description);
+
+              const soldOutMessage = this.submitButton.querySelector('.sold-out-message');
+              if (!soldOutMessage) return;
+              this.submitButton.setAttribute('aria-disabled', true);
+              this.submitButton.querySelector('span').classList.add('hidden');
+              soldOutMessage.classList.remove('hidden');
+              this.error = true;
+              return;
+            } else if (!this.cart) {
+              window.location = window.routes.cart_url;
+              return;
+            }
+
+            if (!this.error)
+              publish(PUB_SUB_EVENTS.cartUpdate, {
+                source: 'product-form',
+                productVariantId: formData.get('id'),
+                cartData: response,
+              });
+            this.error = false;
+            const quickAddModal = this.closest('quick-add-modal');
+            if (quickAddModal) {
+              document.body.addEventListener(
+                'modalClosed',
+                () => {
+                  setTimeout(() => {
+                    this.cart.renderContents(response);
+                  });
+                },
+                { once: true }
+              );
+              quickAddModal.hide(true);
+            } else {
+              this.cart.renderContents(response);
+            }
+          })
+          .catch((e) => {
+            console.error(e);
+          })
+          .finally(() => {
+            this.submitButton.classList.remove('loading');
+            if (this.cart && this.cart.classList.contains('is-empty')) this.cart.classList.remove('is-empty');
+            if (!this.error) this.submitButton.removeAttribute('aria-disabled');
+            this.querySelector('.loading__spinner').classList.add('hidden');
+          });
+      }
+
+      handleErrorMessage(errorMessage = false) {
+        if (this.hideErrors) return;
+
+        this.errorMessageWrapper =
+          this.errorMessageWrapper || this.querySelector('.product-form__error-message-wrapper');
+        if (!this.errorMessageWrapper) return;
+        this.errorMessage = this.errorMessage || this.errorMessageWrapper.querySelector('.product-form__error-message');
+
+        this.errorMessageWrapper.toggleAttribute('hidden', !errorMessage);
+
+        if (errorMessage) {
+          this.errorMessage.textContent = errorMessage;
+        }
+      }
+    }
+  );
+}
+```
+This code defines a custom element named `product-form` which likely represents a product add-to-cart form on an e-commerce website. Here's a breakdown of the functionalities:
+
+**1. Registration and Class Definition:**
+
+- Similar to the previous code, it checks if a custom element named `product-form` is already defined.
+- If not defined, it defines a new class named `ProductForm` that extends `HTMLElement`.
+
+**2. Constructor (`constructor`):**
+
+- The constructor retrieves the form element within the `product-form` using `querySelector`.
+- It sets the `disabled` attribute of the form element's `[name=id]` input to `false` (likely to enable user interaction with the product ID).
+- It adds an event listener to the form's `submit` event, calling the `onSubmitHandler` method bound to the current instance (`this`).
+- It tries to find a `cart-notification` or `cart-drawer` element using `querySelector`. This element likely represents the shopping cart UI component.
+- It finds the submit button element within the form using `querySelector` and stores it in `submitButton`.
+- If a `cart-drawer` element is found, it sets the `aria-haspopup` attribute of the submit button to `"dialog"` for accessibility purposes (indicating the button opens a dialog-like element).
+- Finally, it checks the `data-hideErrors` attribute of the `product-form` element. If set to `"true"`, it sets a flag `hideErrors` to indicate error messages should be hidden.
+
+**3. `onSubmitHandler`:**
+
+- This method handles form submission.
+- It prevents the default form submission behavior using `evt.preventDefault()`.
+- It checks if the submit button is disabled using `aria-disabled` attribute. If it is, it exits the function.
+- It calls the `handleErrorMessage` method (explained later) to handle any potential errors.
+- It disables the submit button by setting the `aria-disabled` attribute to `"true"` and adds a "loading" class to indicate submission is in progress. It also shows a loading spinner element.
+- It creates a configuration object for the fetch request using `fetchConfig('javascript')`. This likely sets options specific to JavaScript-initiated fetches.
+- It sets the `X-Requested-With` header to `"XMLHttpRequest"` for potential server-side recognition of the request origin.
+- It deletes the `Content-Type` header (as the form data will be sent in a specific format).
+- It creates a `FormData` object from the form element.
+- If a cart element is found:
+    - It adds two additional fields to the form data:
+        - `sections`: This likely contains IDs of sections to be rendered in the cart UI. It's retrieved by calling `getSectionsToRender` on the cart element (assumed to be defined elsewhere).
+        - `sections_url`: This likely stores the current page URL relevant to the cart update.
+    - It calls `setActiveElement` on the cart element, potentially setting which form element within the cart was active when the submit button was clicked.
+- It sets the body of the fetch request to the `FormData` object.
+- It performs a fetch request to the `routes.cart_add_url` endpoint (likely provided for adding items to the cart).
+- The `.then` block processes the successful response:
+    - If the response has a `status` property set to `true`, it indicates an error.
+      - It publishes an event named `PUB_SUB_EVENTS.cartError` with details about the product variant ID, errors, and message.
+      - It calls `handleErrorMessage` with the error description to display an error message.
+      - It checks for a "sold-out" message element within the submit button. If found, it disables the button, hides the default button text, and shows the sold-out message. It also sets an error flag.
+    - If there's no cart element and the response doesn't indicate an error, it redirects the user to the cart page using the `window.routes.cart_url` property.
+    - If there's no error and a cart element exists:
+      - It publishes an event named `PUB_SUB_EVENTS.cartUpdate` with details about the product variant ID and the response data (likely containing updated cart information).
+      - It clears the error flag.
+      - It checks for a `quick-add-modal` element (potentially indicating a quick add to cart functionality).
+        - If the modal exists, it adds a temporary event listener for the `modalClosed` event. When the modal closes, it waits a bit and then calls `cart.renderContents` with the response data to update the cart contents in the UI.
+        - If no modal is found, it directly calls `cart.renderContents` with the response data to update the cart UI.
+- The `.catch` block handles any errors during the fetch request and logs them to the console.
+- The `.finally` block executes regardless of success or error:
+    - It removes the "loading" class from the submit button to hide the loading indicator.
+    - If the cart element exists and has the `is-empty` class (indicating an empty cart before submission), it removes that class to reflect the updated cart.
+    - If there were no errors, it removes the `aria-disabled` attribute from the submit button to re-enable it.
+    - It hides the loading spinner element again.
+
+**4. `handleErrorMessage`:**
+
+- This method handles displaying error messages.
+- It checks the `hideErrors` flag. If set to `true`, the method exits without doing anything (error messages are suppressed).
+- It retrieves the error message wrapper element and the error message element within it using `querySelector`. If either element is not found, the method exits.
+- It toggles the `hidden` attribute of the error message wrapper element based on whether an error message is provided.
+- If an error message is provided, it sets the text content of the error message element to the provided message.
+
+**Overall:**
+
+This code defines a reusable `product-form` custom element that handles submitting product add-to-cart forms. It interacts with the cart UI element, handles successful and unsuccessful submissions, updates the cart UI with new data, and displays error messages if necessary. It also considers scenarios like quick add functionality and empty carts.
+
+## ProductInfo Class
+```javascript
+if (!customElements.get('product-info')) {
+  customElements.define(
+    'product-info',
+    class ProductInfo extends HTMLElement {
+      constructor() {
+        super();
+        this.input = this.querySelector('.quantity__input');
+        this.currentVariant = this.querySelector('.product-variant-id');
+        this.submitButton = this.querySelector('[type="submit"]');
+      }
+
+      cartUpdateUnsubscriber = undefined;
+      variantChangeUnsubscriber = undefined;
+
+      connectedCallback() {
+        if (!this.input) return;
+        this.quantityForm = this.querySelector('.product-form__quantity');
+        if (!this.quantityForm) return;
+        this.setQuantityBoundries();
+        if (!this.dataset.originalSection) {
+          this.cartUpdateUnsubscriber = subscribe(PUB_SUB_EVENTS.cartUpdate, this.fetchQuantityRules.bind(this));
+        }
+        this.variantChangeUnsubscriber = subscribe(PUB_SUB_EVENTS.variantChange, (event) => {
+          const sectionId = this.dataset.originalSection ? this.dataset.originalSection : this.dataset.section;
+          if (event.data.sectionId !== sectionId) return;
+          this.updateQuantityRules(event.data.sectionId, event.data.html);
+          this.setQuantityBoundries();
+        });
+      }
+
+      disconnectedCallback() {
+        if (this.cartUpdateUnsubscriber) {
+          this.cartUpdateUnsubscriber();
+        }
+        if (this.variantChangeUnsubscriber) {
+          this.variantChangeUnsubscriber();
+        }
+      }
+
+      setQuantityBoundries() {
+        const data = {
+          cartQuantity: this.input.dataset.cartQuantity ? parseInt(this.input.dataset.cartQuantity) : 0,
+          min: this.input.dataset.min ? parseInt(this.input.dataset.min) : 1,
+          max: this.input.dataset.max ? parseInt(this.input.dataset.max) : null,
+          step: this.input.step ? parseInt(this.input.step) : 1,
+        };
+
+        let min = data.min;
+        const max = data.max === null ? data.max : data.max - data.cartQuantity;
+        if (max !== null) min = Math.min(min, max);
+        if (data.cartQuantity >= data.min) min = Math.min(min, data.step);
+        this.input.min = min;
+
+        if (max) {
+          this.input.max = max;
+        } else {
+          this.input.removeAttribute('max');
+        }
+        this.input.value = min;
+        publish(PUB_SUB_EVENTS.quantityUpdate, undefined);
+      }
+
+      fetchQuantityRules() {
+        if (!this.currentVariant || !this.currentVariant.value) return;
+        this.querySelector('.quantity__rules-cart .loading__spinner').classList.remove('hidden');
+        fetch(`${this.dataset.url}?variant=${this.currentVariant.value}&section_id=${this.dataset.section}`)
+          .then((response) => {
+            return response.text();
+          })
+          .then((responseText) => {
+            const html = new DOMParser().parseFromString(responseText, 'text/html');
+            this.updateQuantityRules(this.dataset.section, html);
+            this.setQuantityBoundries();
+          })
+          .catch((e) => {
+            console.error(e);
+          })
+          .finally(() => {
+            this.querySelector('.quantity__rules-cart .loading__spinner').classList.add('hidden');
+          });
+      }
+
+      updateQuantityRules(sectionId, html) {
+        const quantityFormUpdated = html.getElementById(`Quantity-Form-${sectionId}`);
+        const selectors = ['.quantity__input', '.quantity__rules', '.quantity__label'];
+        for (let selector of selectors) {
+          const current = this.quantityForm.querySelector(selector);
+          const updated = quantityFormUpdated.querySelector(selector);
+          if (!current || !updated) continue;
+          if (selector === '.quantity__input') {
+            const attributes = ['data-cart-quantity', 'data-min', 'data-max', 'step'];
+            for (let attribute of attributes) {
+              const valueUpdated = updated.getAttribute(attribute);
+              if (valueUpdated !== null) {
+                current.setAttribute(attribute, valueUpdated);
+              } else {
+                current.removeAttribute(attribute);
+              }
+            }
+          } else {
+            current.innerHTML = updated.innerHTML;
+          }
+        }
+      }
+    }
+  );
+}
+```
+## Breakdown of the `product-info` Custom Element:
+
+This code defines a custom element named `product-info` likely used on a product page to manage the quantity input for adding items to the cart. It handles setting quantity boundaries, fetching quantity rules based on the selected variant, and updating the UI accordingly.
+
+**1. Registration and Class Definition:**
+
+- Similar to the previous codes, it checks if a custom element named `product-info` is already defined.
+- If not defined, it defines a new class named `ProductInfo` that extends `HTMLElement`.
+
+**2. Constructor (`constructor`):**
+
+- The constructor retrieves the following elements from the DOM:
+    - `input`: The quantity input element using `querySelector` (`.quantity__input`).
+    - `currentVariant`: The element containing the current product variant ID using `querySelector` (`.product-variant-id`).
+    - `submitButton`: The submit button element using `querySelector` (`[type="submit"]`).
+
+**3. Unsubscriber Properties:**
+
+- `cartUpdateUnsubscriber` and `variantChangeUnsubscriber` are declared but not initialized yet. These will hold unsubscribe functions for event listeners later.
+
+**4. `connectedCallback`:**
+
+- This method is called when the element is inserted into the DOM.
+- It checks if the quantity input element is found. If not, it exits the function.
+- It retrieves the quantity form element using `querySelector` (`.product-form__quantity`). If not found, it exits the function.
+- It calls `setQuantityBoundries` to set initial boundaries for the quantity input (explained later).
+- It checks the `data-originalSection` attribute. If not set, it subscribes to the `PUB_SUB_EVENTS.cartUpdate` event using `subscribe`. The callback (`fetchQuantityRules`) will be called whenever the cart is updated. 
+- It subscribes to the `PUB_SUB_EVENTS.variantChange` event using `subscribe`. The callback function updates quantity rules based on the new variant selection. It checks if the changed section matches the section of this element before applying updates.
+
+**5. `disconnectedCallback`:**
+
+- This method is called when the element is removed from the DOM.
+- It calls the unsubscribe functions stored in `cartUpdateUnsubscriber` and `variantChangeUnsubscriber` to clean up event listeners and prevent memory leaks.
+
+**6. `setQuantityBoundries`:**
+
+- This method sets the minimum and potentially the maximum allowed quantity for the input element based on various factors.
+- It creates an object from data attributes of the quantity input element:
+    - `cartQuantity`: The current quantity in the cart (if any).
+    - `min`: Minimum allowed quantity (default 1).
+    - `max`: Maximum allowed quantity (can be null).
+    - `step`: Step value for increment/decrement (default 1).
+- It calculates the adjusted minimum quantity considering:
+    - Existing quantity in the cart.
+    - Overall maximum quantity (if defined).
+    - Step value.
+- It sets the `min` and `max` attributes of the quantity input element based on the calculations.
+- It sets the initial value of the input element to the adjusted minimum quantity.
+- Finally, it publishes a `PUB_SUB_EVENTS.quantityUpdate` event with no data (likely for other components to react to quantity changes).
+
+**7. `fetchQuantityRules`:**
+
+- This method fetches quantity rules from the server based on the current variant and section ID. 
+- It checks if the current variant ID is available. If not, it exits the function.
+- It shows a loading spinner element while fetching data.
+- It constructs a fetch request URL using `dataset.url`, variant ID, and section ID.
+- The `.then` block processes the successful response:
+    - It parses the response text as HTML using `DOMParser`.
+    - It calls `updateQuantityRules` with the section ID and parsed HTML to update the UI elements.
+    - It calls `setQuantityBoundries` again to potentially adjust quantity boundaries based on the fetched rules.
+- The `.catch` block logs any errors during the fetch request.
+- The `.finally` block hides the loading spinner element regardless of success or error.
+
+**8. `updateQuantityRules`:**
+
+- This method updates the UI elements within the quantity form based on the provided HTML snippet.
+- It finds the updated quantity form element for the given section ID using `getElementById`.
+- It defines an array of selectors for elements to be updated within the quantity form:
+    - `.quantity__input`: The quantity input element.
+    - `.quantity__rules`: The element containing quantity rules (potentially discounts or messages).
+    - `.quantity__label`: The label
+- It loops through the selector array. For each selector:
+    - It finds the corresponding element within the current quantity form and the updated quantity form using `querySelector`.
+    - If either element is not found, it skips to the next selector.
+    - If the selector targets the quantity input element:
+        - It loops through another array containing data attributes (`data-cart-quantity`, `data-min`, `data-max`, `step`).
+        - For each attribute, it checks if the updated element has the attribute.
+            - If it does, it sets the same attribute on the current element with the updated value.
+            - If it doesn't, it removes the attribute from the current element.
+    - Otherwise (if the selector targets other elements like label or rules), it sets the inner HTML of the current element to the inner HTML of the updated element, effectively replacing the content.
+
+**Overall:**
+
+This code defines a reusable `product-info` custom element that manages the quantity input for adding items to the cart. It ensures the quantity stays within allowed boundaries based on product data, cart updates, and variant selection. It fetches quantity-specific rules from the server and updates the UI elements (input attributes, labels, and rules) accordingly. It also cleans up event listeners when the element is removed from the DOM.
+
+## ProductModal Class
+```javascript
+if (!customElements.get('product-modal')) {
+  customElements.define(
+    'product-modal',
+    class ProductModal extends ModalDialog {
+      constructor() {
+        super();
+      }
+
+      hide() {
+        super.hide();
+      }
+
+      show(opener) {
+        super.show(opener);
+        this.showActiveMedia();
+      }
+
+      showActiveMedia() {
+        this.querySelectorAll(
+          `[data-media-id]:not([data-media-id="${this.openedBy.getAttribute('data-media-id')}"])`
+        ).forEach((element) => {
+          element.classList.remove('active');
+        });
+        const activeMedia = this.querySelector(`[data-media-id="${this.openedBy.getAttribute('data-media-id')}"]`);
+        const activeMediaTemplate = activeMedia.querySelector('template');
+        const activeMediaContent = activeMediaTemplate ? activeMediaTemplate.content : null;
+        activeMedia.classList.add('active');
+        activeMedia.scrollIntoView();
+
+        const container = this.querySelector('[role="document"]');
+        container.scrollLeft = (activeMedia.width - container.clientWidth) / 2;
+
+        if (
+          activeMedia.nodeName == 'DEFERRED-MEDIA' &&
+          activeMediaContent &&
+          activeMediaContent.querySelector('.js-youtube')
+        )
+          activeMedia.loadContent();
+      }
+    }
+  );
+}
+```
+## Breakdown of the `product-modal` Custom Element:
+
+This code defines a custom element named `product-modal` that extends the `ModalDialog` class (presumably defined elsewhere) and manages the behavior of a product modal on an e-commerce website.
+
+**1. Registration and Class Definition:**
+
+- It checks if a custom element named `product-modal` is already defined.
+- If not defined, it defines a new class named `ProductModal` that extends the `ModalDialog` class.
+
+**2. Constructor (`constructor`):**
+
+- The constructor likely calls the constructor of the parent `ModalDialog` class to handle basic modal functionality like opening and closing.
+
+**3. `hide`:**
+
+- This method hides the modal. It likely calls a similar method from the parent `ModalDialog` class.
+
+**4. `show`:**
+
+- This method shows the modal. It likely calls a similar method from the parent `ModalDialog` class and additionally calls `showActiveMedia` to display the relevant media content within the modal.
+- It takes an `opener` argument, which might be the element that triggered the modal opening.
+
+**5. `showActiveMedia`:**
+
+- This method handles showing the active media content based on the element that triggered the modal opening.
+- It retrieves all elements within the modal that have a `data-media-id` attribute using `querySelectorAll`.
+- It filters out the element with the same `data-media-id` as the opener element to avoid deactivating the intended media.
+- It loops through the filtered elements and removes the `active` class, potentially hiding previously displayed media.
+- It finds the element with the same `data-media-id` as the opener element using `querySelector`. This is likely the media content relevant to the product displayed in the modal.
+- It retrieves a potential template element within the active media element using `querySelector`.
+- It extracts the content from the template (if it exists) or sets it to `null` if no template is found.
+- It adds the `active` class to the active media element to display it.
+- It scrolls the modal content to bring the active media into view using `scrollIntoView`.
+- It calculates and sets the horizontal scroll position of the modal container element (with role `"document"`) to center the active media horizontally.
+- It checks if the active media element's node name is `"DEFERRED-MEDIA"` (potentially a custom element for lazy loading) and if it has content from a template with a `.js-youtube` element (likely indicating YouTube content).
+  - If both conditions are met, it calls a `loadContent` method (presumably defined elsewhere) on the active media element to load the YouTube content.
+
+**Overall:**
+
+This code defines a reusable `product-modal` custom element that inherits functionalities from a base `ModalDialog` class. It focuses on showing the appropriate media content within the product modal based on the element that triggered the modal opening. It also handles centering the media horizontally and potentially lazy-loads YouTube content if necessary.
+
+## Product Model Class
+```javascript
+if (!customElements.get('product-model')) {
+  customElements.define(
+    'product-model',
+    class ProductModel extends DeferredMedia {
+      constructor() {
+        super();
+      }
+
+      loadContent() {
+        super.loadContent();
+
+        Shopify.loadFeatures([
+          {
+            name: 'model-viewer-ui',
+            version: '1.0',
+            onLoad: this.setupModelViewerUI.bind(this),
+          },
+        ]);
+      }
+
+      setupModelViewerUI(errors) {
+        if (errors) return;
+
+        this.modelViewerUI = new Shopify.ModelViewerUI(this.querySelector('model-viewer'));
+      }
+    }
+  );
+}
+
+window.ProductModel = {
+  loadShopifyXR() {
+    Shopify.loadFeatures([
+      {
+        name: 'shopify-xr',
+        version: '1.0',
+        onLoad: this.setupShopifyXR.bind(this),
+      },
+    ]);
+  },
+
+  setupShopifyXR(errors) {
+    if (errors) return;
+
+    if (!window.ShopifyXR) {
+      document.addEventListener('shopify_xr_initialized', () => this.setupShopifyXR());
+      return;
+    }
+
+    document.querySelectorAll('[id^="ProductJSON-"]').forEach((modelJSON) => {
+      window.ShopifyXR.addModels(JSON.parse(modelJSON.textContent));
+      modelJSON.remove();
+    });
+    window.ShopifyXR.setupXRElements();
+  },
+};
+
+window.addEventListener('DOMContentLoaded', () => {
+  if (window.ProductModel) window.ProductModel.loadShopifyXR();
+});
+```
+This code implements functionalities related to 3D product models on a Shopify store:
+
+**1. `product-model` Custom Element:**
+
+- It defines a custom element named `product-model` that likely extends a `DeferredMedia` class (presumably defined elsewhere) for lazy loading content.
+- The constructor calls the constructor of the parent `DeferredMedia` class to inherit functionalities related to deferred loading.
+
+**2. `loadContent`:**
+
+- This method is likely called when the `product-model` element is ready to display its content.
+    - It calls the `loadContent` method of the parent `DeferredMedia` class to handle the basic loading process.
+    - It uses the `Shopify` object (presumably provided by the Shopify script) to load specific features:
+        - `name`: `"model-viewer-ui"` - This suggests loading a UI component for interacting with a 3D model viewer element.
+        - `version`: `"1.0"` - Specifies the version of the feature to load.
+        - `onLoad`: This callback function (`setupModelViewerUI`) is called after the feature is loaded.
+
+**3. `setupModelViewerUI`:**
+
+- This method gets called after the `"model-viewer-ui"` feature is loaded.
+  - It checks for any errors during the loading process. If errors exist, it exits the function.
+  - It creates a new instance of `Shopify.ModelViewerUI` using the first `model-viewer` element found within the `product-model` element. This likely initializes the UI for interacting with the 3D model.
+
+**4. `window.ProductModel` Object:**
+
+- This object defines functionalities related to loading and setting up Shopify XR features.
+
+**5. `loadShopifyXR`:**
+
+- This method likely gets called from somewhere else in the code (not shown here) to initiate loading of Shopify XR features.
+- It uses the `Shopify` object to load another feature:
+    - `name`: `"shopify-xr"` - This suggests loading the core Shopify XR library for handling 3D/AR experiences.
+    - `version`: `"1.0"` - Specifies the version of the feature to load.
+    - `onLoad`: This callback function (`setupShopifyXR`) is called after the feature is loaded.
+
+**6. `setupShopifyXR`:**
+
+- This method gets called after the `"shopify-xr"` feature is loaded.
+  - It checks for any errors during the loading process. If errors exist, it exits the function.
+  - It checks if the `window.ShopifyXR` object is already available. This might indicate if the library has been loaded previously on the page.
+    - If `window.ShopifyXR` is not available yet, it adds an event listener for `"shopify_xr_initialized"`. This event likely gets triggered when the Shopify XR library finishes initialization elsewhere on the page. Once triggered, it will call `setupShopifyXR` again to proceed.
+  - If `window.ShopifyXR` is available:
+    - It loops through all elements with IDs starting with `"ProductJSON-"`. These elements likely contain JSON data about product models.
+        - For each element, it parses the JSON content using `JSON.parse`.
+        - It calls `window.ShopifyXR.addModels` to add the parsed model data to the Shopify XR library.
+        - It removes the processed `modelJSON` element as it's no longer needed.
+    - Finally, it calls `window.ShopifyXR.setupXRElements` to potentially set up any necessary UI elements for interacting with the XR experience.
+
+**7. DOMContentLoaded Event Listener:**
+
+- This event listener is triggered when the initial HTML document is parsed and loaded.
+- It checks if the `window.ProductModel` object exists (likely defined elsewhere in the code).
+  - If it exists, it calls `window.ProductModel.loadShopifyXR` to initiate loading of the Shopify XR features, potentially enabling 3D/AR functionalities for product models on the page.
+
+**Overall:**
+
+This code demonstrates how a Shopify store might utilize custom elements and the Shopify XR library to provide 3D product model experiences. It involves loading specific features (`model-viewer-ui` and `shopify-xr`), parsing model data from JSON elements, and integrating them with the Shopify XR library for a richer product viewing experience.
+
+## Subscribe Function
+```javascript
+let subscribers = {};
+
+function subscribe(eventName, callback) {
+  if (subscribers[eventName] === undefined) {
+    subscribers[eventName] = [];
+  }
+
+  subscribers[eventName] = [...subscribers[eventName], callback];
+
+  return function unsubscribe() {
+    subscribers[eventName] = subscribers[eventName].filter((cb) => {
+      return cb !== callback;
+    });
+  };
+}
+```
+This code defines a function for subscribing to custom events and a way to unsubscribe from them. Here's a breakdown:
+
+**1. `subscribers` Variable:**
+
+- This variable is declared outside the function and acts as a storage for event listeners. It's an object where keys are event names (strings) and values are arrays of callback functions associated with that event.
+
+**2. `subscribe` Function:**
+
+- This function takes two arguments:
+    - `eventName`: A string representing the name of the event to subscribe to.
+    - `callback`: A function to be called when the event is published.
+- It checks if the `eventName` already exists as a key in the `subscribers` object.
+  - If it doesn't exist, it creates a new array as the value for that key in the `subscribers` object. This array will hold the callback functions associated with the event.
+- It uses the spread operator (`...`) to create a copy of the existing subscriber array for the event (if any) and then adds the provided `callback` function to the end of the copied array. This ensures we don't modify the original array directly.
+- It assigns the newly created array back to the `eventName` key in the `subscribers` object.
+- It returns an unsubscribe function as a way to remove the specific callback from the event listeners.
+
+**3. Unsubscribe Function (Returned by `subscribe`):**
+
+- This function doesn't have a name as it's returned anonymously from the `subscribe` function.
+- It filters the array of callback functions associated with the event (`subscribers[eventName]`). It keeps only the callbacks that are not the same as the `callback` function passed during subscription.
+- This effectively removes the specific callback function from the list of listeners for that event.
+- It updates the `subscribers` object with the filtered array for the `eventName`.
+
+**Overall:**
+
+This code provides a simple event subscription mechanism. You can use `subscribe` to register functions to be called whenever a specific event is published (triggered). The returned unsubscribe function allows you to detach the specific callback from the event listener list later if needed.
+
+## Publish Function
+```javascript
+function publish(eventName, data) {
+  if (subscribers[eventName]) {
+    subscribers[eventName].forEach((callback) => {
+      callback(data);
+    });
+  }
+}
+```
+This code defines a function for publishing (triggering) custom events and passing data to the subscribed functions. Here's a breakdown:
+
+**1. `publish` Function:**
+
+- This function takes two arguments:
+    - `eventName`: A string representing the name of the event to publish.
+    - `data` (optional): Any data you want to pass to the subscribed callback functions.
+- It checks if the `eventName` exists as a key in the `subscribers` object (presumably defined outside this function).
+  - If the `eventName` exists (meaning there are subscribers for this event):
+    - It retrieves the array of callback functions associated with the event from `subscribers[eventName]`.
+    - It uses `forEach` to loop through each callback function in the array.
+    - Inside the loop, it calls each `callback` function and passes the provided `data` argument to it. This effectively executes the subscribed functions with the optional data you provide.
+
+**Overall:**
+
+This function allows you to trigger custom events and optionally pass data to the functions that have subscribed to that event using the `subscribe` function (defined previously). This creates a way for different parts of your code to communicate and react to specific events.
+
+## QuantityPopover Class
+```javascript
+if (!customElements.get('quantity-popover')) {
+  customElements.define(
+    'quantity-popover',
+    class QuantityPopover extends HTMLElement {
+      constructor() {
+        super();
+        this.mql = window.matchMedia('(min-width: 990px)');
+        this.mqlTablet = window.matchMedia('(min-width: 750px)');
+        this.infoButtonDesktop = this.querySelector('.quantity-popover__info-button--icon-only');
+        this.infoButtonMobile = this.querySelector('.quantity-popover__info-button--icon-with-label');
+        this.popoverInfo = this.querySelector('.quantity-popover__info');
+        this.closeButton = this.querySelector('.button-close');
+        this.eventMouseEnterHappened = false;
+
+        if (this.closeButton) {
+          this.closeButton.addEventListener('click', this.closePopover.bind(this));
+        }
+
+        if (this.popoverInfo && this.infoButtonDesktop && this.mqlTablet.matches) {
+          this.popoverInfo.addEventListener('mouseleave', this.closePopover.bind(this));
+        }
+
+        if (this.infoButtonDesktop) {
+          this.infoButtonDesktop.addEventListener('click', this.togglePopover.bind(this));
+          this.infoButtonDesktop.addEventListener('focusout', this.closePopover.bind(this));
+        }
+
+        if (this.infoButtonMobile) {
+          this.infoButtonMobile.addEventListener('click', this.togglePopover.bind(this));
+        }
+
+        if (this.infoButtonDesktop && this.mqlTablet.matches) {
+          this.infoButtonDesktop.addEventListener('mouseenter', this.togglePopover.bind(this));
+          this.infoButtonDesktop.addEventListener('mouseleave', this.closePopover.bind(this));
+        }
+      }
+
+      togglePopover(event) {
+        event.preventDefault();
+        if (event.type === 'mouseenter') {
+          this.eventMouseEnterHappened = true;
+        }
+
+        if (event.type === 'click' && this.eventMouseEnterHappened) return;
+
+        const button = this.infoButtonDesktop && this.mql.matches ? this.infoButtonDesktop : this.infoButtonMobile;
+        const isExpanded = button.getAttribute('aria-expanded') === 'true';
+
+        if ((this.mql.matches && !isExpanded) || event.type === 'click') {
+          button.setAttribute('aria-expanded', !isExpanded);
+
+          this.popoverInfo.toggleAttribute('hidden');
+
+          button.classList.toggle('quantity-popover__info-button--open');
+
+          this.infoButtonDesktop.classList.add('quantity-popover__info-button--icon-only--animation');
+        }
+
+        const isOpen = button.getAttribute('aria-expanded') === 'true';
+
+        if (isOpen && event.type !== 'mouseenter') {
+          button.focus();
+          button.addEventListener('keyup', (e) => {
+            if (e.key === 'Escape') {
+              this.closePopover(e);
+            }
+          });
+        }
+      }
+
+      closePopover(event) {
+        event.preventDefault();
+        const isButtonChild = this.infoButtonDesktop.contains(event.relatedTarget);
+        const isPopoverChild = this.popoverInfo.contains(event.relatedTarget);
+
+        const button = this.infoButtonDesktop && this.mql.matches ? this.infoButtonDesktop : this.infoButtonMobile;
+
+        if (!isButtonChild && !isPopoverChild) {
+          button.setAttribute('aria-expanded', 'false');
+          button.classList.remove('quantity-popover__info-button--open');
+          this.popoverInfo.setAttribute('hidden', '');
+          this.infoButtonDesktop.classList.remove('quantity-popover__info-button--icon-only--animation');
+        }
+
+        this.eventMouseEnterHappened = false;
+      }
+    }
+  );
+}
+```
+This code defines a custom element named `quantity-popover` that manages a popover containing additional information about product quantity. It uses media queries to adjust behavior based on screen size.
+
+**Breakdown:**
+
+1. **Registration and Class Definition:**
+   - Checks if a custom element named `quantity-popover` is already defined.
+   - If not defined, it defines a new class named `QuantityPopover` that extends `HTMLElement`.
+
+2. **Constructor (`constructor`):**
+   - Sets up media query listeners for checking screen size:
+      - `mql`: Matches screens wider than 990px (desktop).
+      - `mqlTablet`: Matches screens wider than 750px (tablet and desktop).
+   - Retrieves references to various DOM elements using `querySelector`:
+      - `infoButtonDesktop`: Button for showing popover on desktop (icon-only).
+      - `infoButtonMobile`: Button for showing popover on mobile (icon with label).
+      - `popoverInfo`: The popover element containing additional information.
+      - `closeButton`: Button for closing the popover (if present).
+   - Sets up event listeners based on element existence and media query conditions:
+      - `closeButton` click: Calls `closePopover`.
+      - `popoverInfo` mouseleave (tablet only): Calls `closePopover` on mouse leaving popover.
+      - `infoButtonDesktop` click/focusout: Calls `togglePopover`.
+      - `infoButtonMobile` click: Calls `togglePopover`.
+      - `infoButtonDesktop` mouseenter/mouseleave (tablet only): Toggles popover on hover (enter) and closes on leave.
+   - Initializes `eventMouseEnterHappened` flag to false (used for click prevention).
+
+3. **`togglePopover` Method:**
+   - Prevents default behavior for the event.
+   - Handles cases where the event is a mouseenter:
+      - Sets `eventMouseEnterHappened` to true for click prevention logic.
+   - Ignores clicks if `eventMouseEnterHappened` is true (prevents double opening).
+   - Chooses the appropriate button element based on media query and screen size.
+   - Checks if the popover is already expanded based on `aria-expanded` attribute.
+   - Toggles the `aria-expanded` attribute, `hidden` attribute on popover, and open class on button based on expansion state and media query conditions.
+   - Adds/removes animation class on the desktop button.
+   - Focuses the button if the popover is open and the event is not a mouseenter. 
+   - Adds a temporary keyup listener to the button to close the popover on Escape key press.
+
+4. **`closePopover` Method:**
+   - Prevents default behavior for the event.
+   - Checks if the click originated from within the button or popover using `contains`.
+   - Chooses the appropriate button element based on media query and screen size.
+   - Closes the popover if the click originated outside the button and popover:
+      - Sets `aria-expanded` to false.
+      - Removes open class from button.
+      - Hides the popover.
+      - Removes animation class from desktop button.
+   - Resets `eventMouseEnterHappened` flag.
+
+**Overall:**
+
+This code provides a reusable `quantity-popover` element that displays additional information about product quantity in a popover. It adapts its behavior based on screen size using media queries and offers hover interactions on tablets while maintaining click interactions on all screen sizes. It also allows closing the popover using the close button or Escape key.
+
+## QuickAddBulk Class
+```javascript
+if (!customElements.get('quick-add-bulk')) {
+  customElements.define(
+    'quick-add-bulk',
+    class QuickAddBulk extends HTMLElement {
+      constructor() {
+        super();
+        this.quantity = this.querySelector('quantity-input');
+
+        const debouncedOnChange = debounce((event) => {
+          if (parseInt(event.target.dataset.cartQuantity) === 0) {
+            this.addToCart(event);
+          } else {
+            this.updateCart(event);
+          }
+        }, ON_CHANGE_DEBOUNCE_TIMER);
+
+        this.addEventListener('change', debouncedOnChange.bind(this));
+        this.listenForActiveInput();
+        this.listenForKeydown();
+        this.lastActiveInputId = null;
+        const pageParams = new URLSearchParams(window.location.search);
+        window.pageNumber = decodeURIComponent(pageParams.get('page') || '');
+      }
+
+      connectedCallback() {
+        this.cartUpdateUnsubscriber = subscribe(PUB_SUB_EVENTS.cartUpdate, (event) => {
+          if (event.source === 'quick-add') {
+            return;
+          }
+          // If its another section that made the update
+          this.onCartUpdate().then(() => {
+            this.listenForActiveInput();
+            this.listenForKeydown();
+          });
+        });
+      }
+
+      disconnectedCallback() {
+        if (this.cartUpdateUnsubscriber) {
+          this.cartUpdateUnsubscriber();
+        }
+      }
+
+      getInput() {
+        return this.querySelector('quantity-input input');
+      }
+
+      selectProgressBar() {
+        return this.querySelector('.progress-bar-container');
+      }
+
+      listenForActiveInput() {
+        if (!this.classList.contains('hidden')) {
+          this.getInput().addEventListener('focusin', (event) => event.target.select());
+        }
+        this.isEnterPressed = false;
+      }
+
+      listenForKeydown() {
+        this.getInput().addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') {
+            this.getInput().blur();
+            this.isEnterPressed = true;
+          }
+        });
+      }
+
+      resetQuantityInput(id) {
+        const input = document.getElementById(id);
+        input.value = input.getAttribute('value');
+        this.isEnterPressed = false;
+      }
+
+      cleanErrorMessageOnType(event) {
+        event.target.addEventListener(
+          'keypress',
+          () => {
+            event.target.setCustomValidity('');
+          },
+          { once: true }
+        );
+      }
+
+      onCartUpdate() {
+        return new Promise((resolve, reject) => {
+          fetch(`${this.getSectionsUrl()}?section_id=${this.closest('.collection').dataset.id}`)
+            .then((response) => response.text())
+            .then((responseText) => {
+              const html = new DOMParser().parseFromString(responseText, 'text/html');
+              const sourceQty = html.querySelector(
+                `#quick-add-bulk-${this.dataset.id}-${this.closest('.collection').dataset.id}`
+              );
+              if (sourceQty) {
+                this.innerHTML = sourceQty.innerHTML;
+              }
+              resolve();
+            })
+            .catch((e) => {
+              console.error(e);
+              reject(e);
+            });
+        });
+      }
+
+      updateCart(event) {
+        this.lastActiveInputId = event.target.getAttribute('data-index');
+        this.quantity.classList.add('quantity__input-disabled');
+        this.selectProgressBar().classList.remove('hidden');
+        const body = JSON.stringify({
+          quantity: event.target.value,
+          id: event.target.getAttribute('data-index'),
+          sections: this.getSectionsToRender().map((section) => section.section),
+          sections_url: this.getSectionsUrl(),
+        });
+
+        fetch(`${routes.cart_change_url}`, { ...fetchConfig('javascript'), ...{ body } })
+          .then((response) => {
+            return response.text();
+          })
+          .then((state) => {
+            const parsedState = JSON.parse(state);
+            this.quantity.classList.remove('quantity__input-disabled');
+            if (parsedState.description || parsedState.errors) {
+              event.target.setCustomValidity(parsedState.description);
+              event.target.reportValidity();
+              this.resetQuantityInput(event.target.id);
+              this.selectProgressBar().classList.add('hidden');
+              event.target.select();
+              this.cleanErrorMessageOnType(event);
+              return;
+            }
+
+            this.renderSections(parsedState);
+
+            publish(PUB_SUB_EVENTS.cartUpdate, { source: 'quick-add', cartData: parsedState });
+          })
+          .catch((error) => {
+            console.log(error, 'error');
+          });
+      }
+
+      addToCart(event) {
+        this.quantity.classList.add('quantity__input-disabled');
+        this.selectProgressBar().classList.remove('hidden');
+        this.lastActiveInputId = event.target.getAttribute('data-index');
+        const body = JSON.stringify({
+          items: [
+            {
+              quantity: parseInt(event.target.value),
+              id: parseInt(this.dataset.id),
+            },
+          ],
+          sections: this.getSectionsToRender().map((section) => section.section),
+        });
+
+        fetch(`${routes.cart_add_url}`, { ...fetchConfig('javascript'), ...{ body } })
+          .then((response) => {
+            return response.text();
+          })
+          .then((state) => {
+            const parsedState = JSON.parse(state);
+            this.quantity.classList.remove('quantity__input-disabled');
+            if (parsedState.description || parsedState.errors) {
+              event.target.setCustomValidity(parsedState.description);
+              event.target.reportValidity();
+              this.resetQuantityInput(event.target.id);
+              this.selectProgressBar().classList.add('hidden');
+              event.target.select();
+              this.cleanErrorMessageOnType(event);
+              // Error handling
+              return;
+            }
+
+            this.renderSections(parsedState);
+
+            publish(PUB_SUB_EVENTS.cartUpdate, { source: 'quick-add', cartData: parsedState });
+          })
+          .catch((error) => {
+            console.error(error);
+          });
+      }
+
+      getSectionsToRender() {
+        return [
+          {
+            id: `quick-add-bulk-${this.dataset.id}-${this.closest('.collection-quick-add-bulk').dataset.id}`,
+            section: this.closest('.collection-quick-add-bulk').dataset.id,
+            selector: `#quick-add-bulk-${this.dataset.id}-${this.closest('.collection-quick-add-bulk').dataset.id}`,
+          },
+          {
+            id: 'cart-icon-bubble',
+            section: 'cart-icon-bubble',
+            selector: '.shopify-section',
+          },
+          {
+            id: 'CartDrawer',
+            selector: '#CartDrawer',
+            section: 'cart-drawer',
+          },
+        ];
+      }
+
+      getSectionsUrl() {
+        if (window.pageNumber) {
+          return `${window.location.pathname}?page=${window.pageNumber}`;
+        } else {
+          return `${window.location.pathname}`;
+        }
+      }
+
+      getSectionInnerHTML(html, selector) {
+        return new DOMParser().parseFromString(html, 'text/html').querySelector(selector).innerHTML;
+      }
+
+      renderSections(parsedState) {
+        this.getSectionsToRender().forEach((section) => {
+          const sectionElement = document.getElementById(section.id);
+          if (
+            sectionElement &&
+            sectionElement.parentElement &&
+            sectionElement.parentElement.classList.contains('drawer')
+          ) {
+            parsedState.items.length > 0
+              ? sectionElement.parentElement.classList.remove('is-empty')
+              : sectionElement.parentElement.classList.add('is-empty');
+
+            setTimeout(() => {
+              document.querySelector('#CartDrawer-Overlay').addEventListener('click', this.cart.close.bind(this.cart));
+            });
+          }
+          const elementToReplace =
+            sectionElement && sectionElement.querySelector(section.selector)
+              ? sectionElement.querySelector(section.selector)
+              : sectionElement;
+          if (elementToReplace) {
+            elementToReplace.innerHTML = this.getSectionInnerHTML(
+              parsedState.sections[section.section],
+              section.selector
+            );
+          }
+        });
+
+        if (this.isEnterPressed) {
+          this.querySelector(`#Quantity-${this.lastActiveInputId}`).select();
+        }
+
+        this.listenForActiveInput();
+        this.listenForKeydown();
+      }
+    }
+  );
+}
+```
+This code defines a custom element named `quick-add-bulk` that manages adding and updating product quantities for bulk purchases on a Shopify store. It utilizes techniques like debouncing, DOM manipulation, and event listeners to achieve its functionality.
+
+**Breakdown:**
+
+1. **Registration and Class Definition:**
+   - Checks if a custom element named `quick-add-bulk` is already defined.
+   - If not defined, it defines a new class named `QuickAddBulk` that extends `HTMLElement`.
+
+2. **Constructor (`constructor`):**
+   - Sets up a reference to the `quantity-input` element.
+   - Creates a debounced function (`debouncedOnChange`) to handle quantity changes with a delay using `debounce` (function not provided). This likely helps prevent excessive server requests on rapid typing.
+   - Attaches the debounced function to the `change` event of the element.
+   - Calls methods to:
+      - Listen for focus on the quantity input field.
+      - Listen for keydown events on the quantity input field.
+   - Initializes variables:
+      - `lastActiveInputId`: Stores the ID of the last active quantity input field.
+      - `pageNumber`: Extracts the current page number from the URL search params.
+
+3. **`connectedCallback`:**
+   - Subscribes to the `PUB_SUB_EVENTS.cartUpdate` event using `subscribe` (function not provided). This likely allows the component to react to cart updates triggered from other parts of the application.
+   - The callback function checks if the update originated from a different section (`source !== 'quick-add'`) and then triggers an `onCartUpdate` method to refresh the component's content.
+
+4. **`disconnectedCallback`:**
+   - Unsubscribes from the `PUB_SUB_EVENTS.cartUpdate` event when the element is removed from the DOM.
+
+5. **`getInput`:**
+   - Returns a reference to the input element within the quantity input component.
+
+6. **`selectProgressBar`:**
+   - Returns a reference to the progress bar container element.
+
+7. **`listenForActiveInput`:**
+   - If the component is visible, it adds a focus listener to the quantity input to select all text upon focus.
+   - Resets the `isEnterPressed` flag to false.
+
+8. **`listenForKeydown`:**
+   - Attaches a keydown listener to the quantity input.
+   - If the key pressed is Enter, it blurs the input and sets `isEnterPressed` to true.
+
+9. **`resetQuantityInput`:**
+   - Takes an input element ID and resets its value to the original value stored in the `value` attribute.
+   - Resets the `isEnterPressed` flag.
+
+10. **`cleanErrorMessageOnType`:**
+   - Attaches a one-time keypress listener to the target event.
+   - Clears any custom validity message set on the input field.
+
+11. **`onCartUpdate`:**
+   - Fetches the HTML content of the relevant sections using the `getSectionsUrl` method.
+   - Parses the fetched HTML using a `DOMParser`.
+   - Selects the updated content for the specific `quick-add-bulk` element based on its ID and the collection ID.
+   - Updates the component's inner HTML with the fetched content if an update is found.
+   - Returns a promise that resolves upon completion.
+
+12. **`updateCart`:**
+   - Stores the ID of the modified quantity input field.
+   - Shows a progress bar and disables the quantity input field.
+   - Prepares a JSON body containing the new quantity, product ID, sections to render, and the sections URL.
+   - Sends a POST request to the cart update URL using `fetch` with the JSON body.
+   - Handles the response:
+      - Parses the JSON response.
+      - Hides the progress bar and re-enables the input field.
+      - If the response contains errors or a description, it sets a custom validity message on the input field, displays it, resets the quantity to the original value, and allows refocusing for correction.
+      - If successful, it renders the updated sections (`renderSections`) and publishes a `PUB_SUB_EVENTS.cartUpdate` event with details about the cart update.
+   - Catches any errors during the process and logs them to the console.
+
+13. **`addToCart`:**
+
+  - Similar to `updateCart`, `addToCart` handles adding a new item to the cart:
+  - Stores modified input ID (`lastActiveInputId`).
+  - Shows progress bar and disables input.
+  - Prepares JSON body with:
+    - Quantity from modified input.
+    - Product ID from modified input.
+    - Sections to render (potentially from `getSectionsToRender`).
+    - Sections URL (potentially from `getSectionsUrl`).
+  - Sends POST request to cart add URL with JSON body (`fetchConfig` likely used).
+  - Handles response:
+    - Parses response as JSON (`parsedState`).
+    - If errors exist:
+        - Displays error on input field and resets quantity.
+    - If successful:
+        - Renders updated sections (`renderSections`).
+        - Publishes cart update event (`PUB_SUB_EVENTS.cartUpdate`).
+  - Catches errors and logs them.
+
+**14. `getSectionsToRender`:**
+
+- Defines an array of objects representing the sections to be re-rendered upon cart updates.
+  - Each object has properties:
+    - `id`: Unique identifier for the section.
+    - `section`: ID of the section in Shopify.
+    - `selector`: CSS selector to target the element within the section that needs to be updated.
+
+**15. `getSectionsUrl`:**
+
+- Constructs the URL for fetching the relevant sections based on the current page number.
+  - If a page number exists in the URL search params, it includes it in the URL.
+  - Otherwise, it returns the current pathname.
+
+**16. `getSectionInnerHTML`:**
+
+- Takes parsed HTML (`html`) and a CSS selector (`selector`).
+- Returns the inner HTML content of the element selected by the provided selector from the parsed HTML.
+
+**17. `renderSections`:**
+
+- Loops through the sections defined in `getSectionsToRender`.
+  - For each section:
+    - It checks if the corresponding section element exists in the DOM.
+    - If the section element is within a drawer element and the cart has items, it removes the "is-empty" class from the drawer's parent element. Otherwise, it adds the "is-empty" class.
+      - This likely manages the drawer's visibility based on cart emptiness.
+    - It finds the element within the section that needs to be updated based on the provided selector.
+    - If the element is found, it replaces its inner HTML with the fetched and parsed content from the corresponding section in the response from the cart update/add request.
+  - If the `isEnterPressed` flag is true (user pressed Enter after modifying quantity), it selects the updated quantity input field.
+  - Finally, it re-listens for focus events and keydown events on the quantity input field.
+
+**Missing Parts:**
+
+- **`debounce` function:** This function is likely used to delay event handling (like quantity changes) to prevent overwhelming the server with requests on rapid typing. You'll need to implement this function using techniques like timers and cancellation to achieve the desired behavior.
+- **`fetchConfig` function:** This function is likely used to build the configuration object for the `fetch` requests. It might include headers, credentials settings, or other options depending on the specific Shopify API requirements.
+
+**Completing the Functionality:**
+
+- Implement the `debounce` function to handle delayed processing of quantity changes.
+- Implement the `fetchConfig` function to define the necessary configuration for the `fetch` requests based on Shopify API requirements.
+- Consider adding error handling for potential issues during DOM manipulations or network requests.
+
+This should provide a complete understanding of the `quick-add-bulk` component's functionalities and areas for potential completion.
+
+## QuickAddModel Class
+```javascript
+if (!customElements.get('quick-add-modal')) {
+  customElements.define(
+    'quick-add-modal',
+    class QuickAddModal extends ModalDialog {
+      constructor() {
+        super();
+        this.modalContent = this.querySelector('[id^="QuickAddInfo-"]');
+      }
+
+      hide(preventFocus = false) {
+        const cartNotification = document.querySelector('cart-notification') || document.querySelector('cart-drawer');
+        if (cartNotification) cartNotification.setActiveElement(this.openedBy);
+        this.modalContent.innerHTML = '';
+
+        if (preventFocus) this.openedBy = null;
+        super.hide();
+      }
+
+      show(opener) {
+        opener.setAttribute('aria-disabled', true);
+        opener.classList.add('loading');
+        opener.querySelector('.loading__spinner').classList.remove('hidden');
+
+        fetch(opener.getAttribute('data-product-url'))
+          .then((response) => response.text())
+          .then((responseText) => {
+            const responseHTML = new DOMParser().parseFromString(responseText, 'text/html');
+            this.productElement = responseHTML.querySelector('section[id^="MainProduct-"]');
+            this.productElement.classList.forEach((classApplied) => {
+              if (classApplied.startsWith('color-') || classApplied === 'gradient')
+                this.modalContent.classList.add(classApplied);
+            });
+            this.preventDuplicatedIDs();
+            this.removeDOMElements();
+            this.setInnerHTML(this.modalContent, this.productElement.innerHTML);
+
+            if (window.Shopify && Shopify.PaymentButton) {
+              Shopify.PaymentButton.init();
+            }
+
+            if (window.ProductModel) window.ProductModel.loadShopifyXR();
+
+            this.removeGalleryListSemantic();
+            this.updateImageSizes();
+            this.preventVariantURLSwitching();
+            super.show(opener);
+          })
+          .finally(() => {
+            opener.removeAttribute('aria-disabled');
+            opener.classList.remove('loading');
+            opener.querySelector('.loading__spinner').classList.add('hidden');
+          });
+      }
+
+      setInnerHTML(element, html) {
+        element.innerHTML = html;
+
+        // Reinjects the script tags to allow execution. By default, scripts are disabled when using element.innerHTML.
+        element.querySelectorAll('script').forEach((oldScriptTag) => {
+          const newScriptTag = document.createElement('script');
+          Array.from(oldScriptTag.attributes).forEach((attribute) => {
+            newScriptTag.setAttribute(attribute.name, attribute.value);
+          });
+          newScriptTag.appendChild(document.createTextNode(oldScriptTag.innerHTML));
+          oldScriptTag.parentNode.replaceChild(newScriptTag, oldScriptTag);
+        });
+      }
+
+      preventVariantURLSwitching() {
+        const variantPicker = this.modalContent.querySelector('variant-selects');
+        if (!variantPicker) return;
+
+        variantPicker.setAttribute('data-update-url', 'false');
+      }
+
+      removeDOMElements() {
+        const pickupAvailability = this.productElement.querySelector('pickup-availability');
+        if (pickupAvailability) pickupAvailability.remove();
+
+        const productModal = this.productElement.querySelector('product-modal');
+        if (productModal) productModal.remove();
+
+        const modalDialog = this.productElement.querySelectorAll('modal-dialog');
+        if (modalDialog) modalDialog.forEach((modal) => modal.remove());
+      }
+
+      preventDuplicatedIDs() {
+        const sectionId = this.productElement.dataset.section;
+        this.productElement.innerHTML = this.productElement.innerHTML.replaceAll(sectionId, `quickadd-${sectionId}`);
+        this.productElement.querySelectorAll('variant-selects, product-info').forEach((element) => {
+          element.dataset.originalSection = sectionId;
+        });
+      }
+
+      removeGalleryListSemantic() {
+        const galleryList = this.modalContent.querySelector('[id^="Slider-Gallery"]');
+        if (!galleryList) return;
+
+        galleryList.setAttribute('role', 'presentation');
+        galleryList.querySelectorAll('[id^="Slide-"]').forEach((li) => li.setAttribute('role', 'presentation'));
+      }
+
+      updateImageSizes() {
+        const product = this.modalContent.querySelector('.product');
+        const desktopColumns = product.classList.contains('product--columns');
+        if (!desktopColumns) return;
+
+        const mediaImages = product.querySelectorAll('.product__media img');
+        if (!mediaImages.length) return;
+
+        let mediaImageSizes =
+          '(min-width: 1000px) 715px, (min-width: 750px) calc((100vw - 11.5rem) / 2), calc(100vw - 4rem)';
+
+        if (product.classList.contains('product--medium')) {
+          mediaImageSizes = mediaImageSizes.replace('715px', '605px');
+        } else if (product.classList.contains('product--small')) {
+          mediaImageSizes = mediaImageSizes.replace('715px', '495px');
+        }
+
+        mediaImages.forEach((img) => img.setAttribute('sizes', mediaImageSizes));
+      }
+    }
+  );
+}
+```
+This code defines a custom element named `quick-add-modal` that extends `ModalDialog` (presumably a base class for modal dialogs). It manages the functionality of a quick add modal on a Shopify store product page.
+
+**Here's a breakdown similar to the previous explanations:**
+
+1. **Registration and Class Definition:**
+   - Checks if a custom element named `quick-add-modal` is already defined.
+   - If not defined, it creates a new class `QuickAddModal` that inherits from `ModalDialog`.
+
+2. **Constructor (`constructor`):**
+   - Calls the constructor of the parent class (`ModalDialog`).
+   - Initializes a reference to the modal content element with an ID starting with "QuickAddInfo-".
+
+3. **`hide` Method:**
+   - Hides the modal using the parent class method (`super.hide`).
+   - Optionally sets the focus back to the element that opened the modal (`openedBy`).
+   - Clears the modal content (`modalContent.innerHTML`).
+
+4. **`show` Method:**
+   - Disables interaction with the element that opened the modal (`opener`).
+   - Shows a loading indicator on the opener element.
+   - Fetches the product details from the URL stored in the opener element's `data-product-url` attribute.
+   - Parses the fetched HTML response.
+   - Extracts the product element section from the parsed HTML.
+   - Copies relevant classes from the product element to the modal content for styling.
+   - Performs various modifications on the product element content:
+      - Prevents duplicate IDs within the modal.
+      - Removes unnecessary DOM elements for the modal context (e.g., pickup availability, nested modals).
+      - Replaces the modal content's inner HTML with the processed product element content.
+   - Initializes Shopify payment button and product model functionalities (if available).
+   - Removes gallery list semantic markup that might not be needed in the modal context.
+   - Updates image sizes for optimal display within the modal.
+   - Prevents the modal from switching product variants based on URL changes.
+   - Calls the parent class method (`super.show`) to display the modal.
+   - Finally, re-enables interaction with the opener element and hides the loading indicator.
+
+5. **`setInnerHTML` Method:**
+   - Sets the inner HTML of an element while also reinjecting script tags to allow their execution. Script tags are normally disabled when using `innerHTML`.
+
+6. **Other Helper Methods:**
+   - `preventVariantURLSwitching`: Disables variant URL updates within the modal.
+   - `removeDOMElements`: Removes specific elements (pickup availability, nested modals) from the product content for the modal.
+   - `preventDuplicatedIDs`: Ensures unique IDs within the modal by replacing them with a prefix.
+   - `removeGalleryListSemantic`: Removes semantic markup related to gallery lists that might not be applicable within the modal.
+   - `updateImageSizes`: Adjusts image sizes for better display in the modal layout.
+
+In essence, this code provides a custom modal component specifically designed to display product details in a quick add context on a Shopify store. 
+
+## QuickOrderListRemoveButton Class
+```javascript
+if (!customElements.get('quick-order-list-remove-button')) {
+  customElements.define(
+    'quick-order-list-remove-button',
+    class QuickOrderListRemoveButton extends HTMLElement {
+      constructor() {
+        super();
+        this.addEventListener('click', (event) => {
+          event.preventDefault();
+          const quickOrderList = this.closest('quick-order-list');
+          quickOrderList.updateQuantity(this.dataset.index, 0);
+        });
+      }
+    }
+  );
+}
+```
+The code defines a custom element named `quick-order-list-remove-button` using JavaScript's `customElements.define` method. Here's a breakdown of what the code does:
+
+1. **Check for Existing Definition:**
+    - The code starts by checking if a custom element named `quick-order-list-remove-button` is already defined using `!customElements.get('quick-order-list-remove-button')`. 
+    - This ensures the element is only defined once, preventing potential issues with duplicate definitions.
+
+2. **Define the Custom Element:**
+    - If the element isn't defined yet, the `customElements.define` method is used to register a new custom element.
+        - The first argument, `'quick-order-list-remove-button'`, specifies the name of the custom element. This name should follow specific rules, including starting with a lowercase letter and containing a hyphen.
+        - The second argument is a class definition that extends `HTMLElement`. This class defines the behavior of the custom element.
+
+3. **Class Definition (QuickOrderListRemoveButton):**
+    - The class `QuickOrderListRemoveButton` extends `HTMLElement`, inheriting the standard HTML element functionalities. 
+    - The `constructor` method doesn't have any special logic in this case, but it's called when a new instance of the element is created.
+
+4. **Click Event Listener:**
+    - An event listener is added to the element using `addEventListener('click', ... )`. This listens for any click events on the element.
+      - The callback function takes the `event` object as an argument.
+      - Inside the callback:
+        - `event.preventDefault()` prevents any default browser behavior associated with the click event (like submitting a form).
+        - `const quickOrderList = this.closest('quick-order-list');` uses the `closest` method to find the closest ancestor element with the tag name `quick-order-list`. This assumes the remove button is placed within the `quick-order-list` element.
+        - `quickOrderList.updateQuantity(this.dataset.index, 0);` calls the `updateQuantity` method on the found `quick-order-list` element. 
+          - `this.dataset.index` retrieves the value of the `data-index` attribute on the current button element (assuming it has one), which likely holds the index of the item to be removed.
+          - `0` is passed as the new quantity, effectively removing the item.
+
+In summary, this code defines a custom button element that listens for clicks. When clicked, it finds the closest `quick-order-list` element and calls its `updateQuantity` method to remove the corresponding item from the list.  
+
+## QuickOrderListRemoveAllButton Claass
+```javascript
+if (!customElements.get('quick-order-list-remove-all-button')) {
+  customElements.define(
+    'quick-order-list-remove-all-button',
+    class QuickOrderListRemoveAllButton extends HTMLElement {
+      constructor() {
+        super();
+        this.quickOrderList = this.closest('quick-order-list');
+        const allVariants = this.quickOrderList.querySelectorAll('[data-quantity-variant-id]');
+        const items = {};
+        let hasVariantsInCart = false;
+
+        allVariants.forEach((variant) => {
+          const cartQty = parseInt(variant.dataset.cartQuantity);
+          if (cartQty > 0) {
+            hasVariantsInCart = true;
+            items[parseInt(variant.dataset.quantityVariantId)] = 0;
+          }
+        });
+
+        if (!hasVariantsInCart) {
+          this.classList.add('hidden');
+        }
+
+        this.actions = {
+          confirm: 'confirm',
+          remove: 'remove',
+          cancel: 'cancel',
+        };
+
+        this.addEventListener('click', (event) => {
+          event.preventDefault();
+          if (this.dataset.action === this.actions.confirm) {
+            this.toggleConfirmation(false, true);
+          } else if (this.dataset.action === this.actions.remove) {
+            this.quickOrderList.updateMultipleQty(items);
+            this.toggleConfirmation(true, false);
+          } else if (this.dataset.action === this.actions.cancel) {
+            this.toggleConfirmation(true, false);
+          }
+        });
+      }
+
+      toggleConfirmation(showConfirmation, showInfo) {
+        this.quickOrderList
+          .querySelector('.quick-order-list-total__confirmation')
+          .classList.toggle('hidden', showConfirmation);
+        this.quickOrderList.querySelector('.quick-order-list-total__info').classList.toggle('hidden', showInfo);
+      }
+    }
+  );
+}
+```
+This code defines a custom element named `quick-order-list-remove-all-button` using JavaScript's `customElements.define` method, similar to the previous code. Here's a breakdown of its functionality:
+
+1. **Check for Existing Definition:**
+   - The code starts by checking if a custom element named `quick-order-list-remove-all-button` is already defined, ensuring it's defined only once.
+
+2. **Define the Custom Element:**
+   - If the element isn't defined yet, `customElements.define` registers a new custom element named `quick-order-list-remove-all-button`.
+   - The second argument is a class definition (`QuickOrderListRemoveAllButton`) that extends `HTMLElement`.
+
+3. **Class Definition (QuickOrderListRemoveAllButton):**
+   - The `constructor` performs several actions:
+      - Finds the closest ancestor element with the tag name `quick-order-list` using `this.closest('quick-order-list')` and stores it in `quickOrderList`.
+      - Selects all descendant elements within `quickOrderList` that have a `data-quantity-variant-id` attribute using `querySelectorAll`. These elements likely represent individual variants in the order list.
+      - Initializes an empty object named `items` to store variant IDs and their new quantities.
+      - Iterates through all found variants (`allVariants`) using `forEach`:
+        - Extracts the current variant's quantity from the `data-cartQuantity` attribute and parses it to an integer using `parseInt`.
+        - Checks if the quantity is greater than 0 (`cartQty > 0`). If so:
+            - Sets a flag `hasVariantsInCart` to `true`, indicating there are items to remove.
+            - Adds an entry to the `items` object with the variant ID (parsed as an integer) as the key and 0 (for removal) as the value.
+      - If `hasVariantsInCart` is still `false` after iterating through all variants, it means there's nothing to remove, so the button is hidden using `classList.add('hidden')`.
+   - Defines an object named `actions` that stores strings representing different button actions (`confirm`, `remove`, and `cancel`).
+   - Attaches a click event listener to the element. The callback function handles clicks based on the button's current action state (`data-action` attribute):
+    - Prevents default click behavior (`event.preventDefault()`).
+    - Checks the `data-action` attribute:
+      - If it's `confirm`, it hides the confirmation section and shows the info section using `toggleConfirmation`.
+      - If it's `remove`, it calls `quickOrderList.updateMultipleQty(items)` to remove all selected variants (using the `items` object) and then hides the confirmation and shows the info section again.
+      - If it's `cancel`, it simply hides the confirmation section and shows the info section.
+   - Defines a method named `toggleConfirmation` that takes two boolean arguments (`showConfirmation` and `showInfo`). This method toggles the visibility of confirmation and info sections within the `quick-order-list` element presumably based on the provided flags.
+
+In essence, this code defines a button for removing all items from a quick order list. It first checks if there are any items to remove. If so, it displays a confirmation dialog before calling the `updateMultipleQty` method on the `quick-order-list` to remove all selected variants. It also uses a helper function `toggleConfirmation` to manage the visibility of confirmation and info sections within the list.
+
+## QuickOrderList Class
+```javascript
+if (!customElements.get('quick-order-list')) {
+  customElements.define(
+    'quick-order-list',
+    class QuickOrderList extends HTMLElement {
+      constructor() {
+        super();
+        this.cart = document.querySelector('cart-drawer');
+        this.actions = {
+          add: 'ADD',
+          update: 'UPDATE',
+        };
+
+        this.quickOrderListId = `quick-order-list-${this.dataset.productId}`;
+        this.defineInputsAndQuickOrderTable();
+
+        this.variantItemStatusElement = document.getElementById('shopping-cart-variant-item-status');
+        const form = this.querySelector('form');
+        this.inputFieldHeight = this.querySelector('.variant-item__quantity-wrapper').offsetHeight;
+        this.isListInsideModal = document.querySelector('.quick-add-bulk');
+        this.stickyHeaderElement = document.querySelector('sticky-header');
+        this.getTableHead();
+        this.getTotalBar();
+
+        if (this.stickyHeaderElement) {
+          this.stickyHeader = {
+            height: this.stickyHeaderElement.offsetHeight,
+            type: `${this.stickyHeaderElement.getAttribute('data-sticky-type')}`,
+          };
+        }
+
+        if (this.getTotalBar()) {
+          this.totalBarPosition = window.innerHeight - this.getTotalBar().offsetHeight;
+
+          window.addEventListener('resize', () => {
+            this.totalBarPosition = window.innerHeight - this.getTotalBar().offsetHeight;
+            this.stickyHeader.height = this.stickyHeaderElement ? this.stickyHeaderElement.offsetHeight : 0;
+          });
+        }
+
+        const pageParams = new URLSearchParams(window.location.search);
+        window.pageNumber = decodeURIComponent(pageParams.get('page') || '');
+        form.addEventListener('submit', this.onSubmit.bind(this));
+        this.addMultipleDebounce();
+      }
+
+      cartUpdateUnsubscriber = undefined;
+
+      onSubmit(event) {
+        event.preventDefault();
+      }
+
+      connectedCallback() {
+        this.cartUpdateUnsubscriber = subscribe(PUB_SUB_EVENTS.cartUpdate, (event) => {
+          if (event.source === this.quickOrderListId) {
+            return;
+          }
+          // If its another section that made the update
+          this.refresh().then(() => {
+            this.defineInputsAndQuickOrderTable();
+            this.addMultipleDebounce();
+          });
+        });
+        this.sectionId = this.dataset.id;
+      }
+
+      disconnectedCallback() {
+        this.cartUpdateUnsubscriber?.();
+      }
+
+      defineInputsAndQuickOrderTable() {
+        this.allInputsArray = Array.from(this.querySelectorAll('input[type="number"]'));
+        this.quickOrderListTable = this.querySelector('.quick-order-list__table');
+        this.quickOrderListTable.addEventListener('focusin', this.switchVariants.bind(this));
+      }
+
+      onChange(event) {
+        const inputValue = parseInt(event.target.value);
+        const cartQuantity = parseInt(event.target.dataset.cartQuantity);
+        const index = event.target.dataset.index;
+        const name = document.activeElement.getAttribute('name');
+
+        const quantity = inputValue - cartQuantity;
+        this.cleanErrorMessageOnType(event);
+        if (inputValue == 0) {
+          this.updateQuantity(index, inputValue, name, this.actions.update);
+        } else {
+          this.validateQuantity(event, name, index, inputValue, cartQuantity, quantity);
+        }
+      }
+
+      cleanErrorMessageOnType(event) {
+        event.target.addEventListener('keydown', () => {
+          event.target.setCustomValidity(' ');
+          event.target.reportValidity();
+        });
+      }
+
+      validateQuantity(event, name, index, inputValue, cartQuantity, quantity) {
+        if (inputValue < event.target.dataset.min) {
+          this.setValidity(
+            event,
+            index,
+            window.quickOrderListStrings.min_error.replace('[min]', event.target.dataset.min)
+          );
+        } else if (inputValue > parseInt(event.target.max)) {
+          this.setValidity(event, index, window.quickOrderListStrings.max_error.replace('[max]', event.target.max));
+        } else if (inputValue % parseInt(event.target.step) != 0) {
+          this.setValidity(event, index, window.quickOrderListStrings.step_error.replace('[step]', event.target.step));
+        } else {
+          event.target.setCustomValidity('');
+          event.target.reportValidity();
+          if (cartQuantity > 0) {
+            this.updateQuantity(index, inputValue, name, this.actions.update);
+          } else {
+            this.updateQuantity(index, quantity, name, this.actions.add);
+          }
+        }
+      }
+
+      setValidity(event, index, message) {
+        event.target.setCustomValidity(message);
+        event.target.reportValidity();
+        this.resetQuantityInput(index);
+        event.target.select();
+      }
+
+      validateInput(target) {
+        if (target.max) {
+          return (
+            parseInt(target.value) == 0 ||
+            (parseInt(target.value) >= parseInt(target.dataset.min) &&
+              parseInt(target.value) <= parseInt(target.max) &&
+              parseInt(target.value) % parseInt(target.step) == 0)
+          );
+        } else {
+          return (
+            parseInt(target.value) == 0 ||
+            (parseInt(target.value) >= parseInt(target.dataset.min) &&
+              parseInt(target.value) % parseInt(target.step) == 0)
+          );
+        }
+      }
+
+      refresh() {
+        return new Promise((resolve, reject) => {
+          fetch(`${this.getSectionsUrl()}?section_id=${this.sectionId}`)
+            .then((response) => response.text())
+            .then((responseText) => {
+              const html = new DOMParser().parseFromString(responseText, 'text/html');
+              const sourceQty = html.querySelector(`#${this.quickOrderListId}`);
+              if (sourceQty) {
+                this.innerHTML = sourceQty.innerHTML;
+              }
+              resolve();
+            })
+            .catch((e) => {
+              console.error(e);
+              reject(e);
+            });
+        });
+      }
+
+      getSectionsToRender() {
+        return [
+          {
+            id: this.quickOrderListId,
+            section: document.getElementById(this.quickOrderListId).dataset.id,
+            selector: `#${this.quickOrderListId} .js-contents`,
+          },
+          {
+            id: 'cart-icon-bubble',
+            section: 'cart-icon-bubble',
+            selector: '.shopify-section',
+          },
+          {
+            id: `quick-order-list-live-region-text-${this.dataset.productId}`,
+            section: 'cart-live-region-text',
+            selector: '.shopify-section',
+          },
+          {
+            id: `quick-order-list-total-${this.dataset.productId}`,
+            section: document.getElementById(this.quickOrderListId).dataset.id,
+            selector: `#${this.quickOrderListId} .quick-order-list__total`,
+          },
+          {
+            id: 'CartDrawer',
+            selector: '#CartDrawer',
+            section: 'cart-drawer',
+          },
+        ];
+      }
+
+      addMultipleDebounce() {
+        this.querySelectorAll('quantity-input').forEach((qty) => {
+          const debouncedOnChange = debounce((event) => {
+            this.onChange(event);
+          }, ON_CHANGE_DEBOUNCE_TIMER);
+          qty.addEventListener('change', debouncedOnChange.bind(this));
+        });
+      }
+
+      addDebounce(id) {
+        const element = this.querySelector(`#Variant-${id} quantity-input`);
+        const debouncedOnChange = debounce((event) => {
+          this.onChange(event);
+        }, ON_CHANGE_DEBOUNCE_TIMER);
+        element.addEventListener('change', debouncedOnChange.bind(this));
+      }
+
+      renderSections(parsedState, id) {
+        this.getSectionsToRender().forEach((section) => {
+          const sectionElement = document.getElementById(section.id);
+          if (
+            sectionElement &&
+            sectionElement.parentElement &&
+            sectionElement.parentElement.classList.contains('drawer')
+          ) {
+            parsedState.items.length > 0
+              ? sectionElement.parentElement.classList.remove('is-empty')
+              : sectionElement.parentElement.classList.add('is-empty');
+            setTimeout(() => {
+              document.querySelector('#CartDrawer-Overlay').addEventListener('click', this.cart.close.bind(this.cart));
+            });
+          }
+          const elementToReplace =
+            sectionElement && sectionElement.querySelector(section.selector)
+              ? sectionElement.querySelector(section.selector)
+              : sectionElement;
+          if (elementToReplace) {
+            if (section.selector === `#${this.quickOrderListId} .js-contents` && id !== undefined) {
+              elementToReplace.querySelector(`#Variant-${id}`).innerHTML = this.getSectionInnerHTML(
+                parsedState.sections[section.section],
+                `#Variant-${id}`
+              );
+            } else {
+              elementToReplace.innerHTML = this.getSectionInnerHTML(
+                parsedState.sections[section.section],
+                section.selector
+              );
+            }
+          }
+        });
+        this.defineInputsAndQuickOrderTable();
+        if (id) {
+          this.addDebounce(id);
+        } else {
+          this.addMultipleDebounce();
+        }
+      }
+
+      getTableHead() {
+        return document.querySelector('.quick-order-list__table thead');
+      }
+
+      getTotalBar() {
+        return this.querySelector('.quick-order-list__total');
+      }
+
+      scrollQuickOrderListTable() {
+        const inputTopBorder = this.variantListInput.getBoundingClientRect().top;
+        const inputBottomBorder = this.variantListInput.getBoundingClientRect().bottom;
+
+        if (this.isListInsideModal) {
+          const totalBarCrossesInput = inputBottomBorder > this.getTotalBar().getBoundingClientRect().top;
+          const tableHeadCrossesInput = inputTopBorder < this.getTableHead().getBoundingClientRect().bottom;
+
+          if (totalBarCrossesInput || tableHeadCrossesInput) {
+            this.scrollToCenter();
+          }
+        } else {
+          const stickyHeaderBottomBorder =
+            this.stickyHeaderElement && this.stickyHeaderElement.getBoundingClientRect().bottom;
+          const totalBarCrossesInput = inputBottomBorder > this.totalBarPosition;
+          const inputOutsideOfViewPort = inputBottomBorder < this.inputFieldHeight;
+          const stickyHeaderCrossesInput =
+            this.stickyHeaderElement &&
+            this.stickyHeader.type !== 'on-scroll-up' &&
+            this.stickyHeader.height > inputTopBorder;
+          const stickyHeaderScrollupCrossesInput =
+            this.stickyHeaderElement &&
+            this.stickyHeader.type === 'on-scroll-up' &&
+            this.stickyHeader.height > inputTopBorder &&
+            stickyHeaderBottomBorder > 0;
+
+          if (
+            totalBarCrossesInput ||
+            inputOutsideOfViewPort ||
+            stickyHeaderCrossesInput ||
+            stickyHeaderScrollupCrossesInput
+          ) {
+            this.scrollToCenter();
+          }
+        }
+      }
+
+      scrollToCenter() {
+        this.variantListInput.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+
+      switchVariants(event) {
+        if (event.target.tagName !== 'INPUT') {
+          return;
+        }
+
+        this.variantListInput = event.target;
+        this.variantListInput.select();
+        if (this.allInputsArray.length !== 1) {
+          this.variantListInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              e.target.blur();
+              if (this.validateInput(e.target)) {
+                const currentIndex = this.allInputsArray.indexOf(e.target);
+                this.lastKey = e.shiftKey;
+                if (!e.shiftKey) {
+                  const nextIndex = currentIndex + 1;
+                  const nextVariant = this.allInputsArray[nextIndex] || this.allInputsArray[0];
+                  nextVariant.select();
+                } else {
+                  const previousIndex = currentIndex - 1;
+                  const previousVariant =
+                    this.allInputsArray[previousIndex] || this.allInputsArray[this.allInputsArray.length - 1];
+                  this.lastElement = previousVariant.dataset.index;
+                  previousVariant.select();
+                }
+              }
+            }
+          });
+
+          this.scrollQuickOrderListTable();
+        } else {
+          this.variantListInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              e.target.blur();
+            }
+          });
+        }
+      }
+
+      updateMultipleQty(items) {
+        this.querySelector('.variant-remove-total .loading__spinner').classList.remove('hidden');
+
+        const body = JSON.stringify({
+          updates: items,
+          sections: this.getSectionsToRender().map((section) => section.section),
+          sections_url: this.getSectionsUrl(),
+        });
+
+        this.updateMessage();
+        this.setErrorMessage();
+
+        fetch(`${routes.cart_update_url}`, { ...fetchConfig(), ...{ body } })
+          .then((response) => {
+            return response.text();
+          })
+          .then((state) => {
+            const parsedState = JSON.parse(state);
+            this.renderSections(parsedState);
+          })
+          .catch(() => {
+            this.setErrorMessage(window.cartStrings.error);
+          })
+          .finally(() => {
+            this.querySelector('.variant-remove-total .loading__spinner').classList.add('hidden');
+          });
+      }
+
+      getSectionsUrl() {
+        if (window.pageNumber) {
+          return `${window.location.pathname}?page=${window.pageNumber}`;
+        } else {
+          return `${window.location.pathname}`;
+        }
+      }
+
+      updateQuantity(id, quantity, name, action) {
+        this.toggleLoading(id, true);
+        this.cleanErrors();
+
+        let routeUrl = routes.cart_change_url;
+        let body = JSON.stringify({
+          quantity,
+          id,
+          sections: this.getSectionsToRender().map((section) => section.section),
+          sections_url: this.getSectionsUrl(),
+        });
+        let fetchConfigType;
+        if (action === this.actions.add) {
+          fetchConfigType = 'javascript';
+          routeUrl = routes.cart_add_url;
+          body = JSON.stringify({
+            items: [
+              {
+                quantity: parseInt(quantity),
+                id: parseInt(id),
+              },
+            ],
+            sections: this.getSectionsToRender().map((section) => section.section),
+            sections_url: this.getSectionsUrl(),
+          });
+        }
+
+        this.updateMessage();
+        this.setErrorMessage();
+
+        fetch(`${routeUrl}`, { ...fetchConfig(fetchConfigType), ...{ body } })
+          .then((response) => {
+            return response.text();
+          })
+          .then((state) => {
+            const parsedState = JSON.parse(state);
+            const quantityElement = document.getElementById(`Quantity-${id}`);
+            const items = document.querySelectorAll('.variant-item');
+
+            if (parsedState.description || parsedState.errors) {
+              const variantItem = document.querySelector(
+                `[id^="Variant-${id}"] .variant-item__totals.small-hide .loading__spinner`
+              );
+              variantItem.classList.add('loading__spinner--error');
+              this.resetQuantityInput(id, quantityElement);
+              if (parsedState.errors) {
+                this.updateLiveRegions(id, parsedState.errors);
+              } else {
+                this.updateLiveRegions(id, parsedState.description);
+              }
+              return;
+            }
+
+            this.classList.toggle('is-empty', parsedState.item_count === 0);
+
+            this.renderSections(parsedState, id);
+
+            let hasError = false;
+
+            const currentItem = parsedState.items.find((item) => item.variant_id === parseInt(id));
+            const updatedValue = currentItem ? currentItem.quantity : undefined;
+            if (updatedValue && updatedValue !== quantity) {
+              this.updateError(updatedValue, id);
+              hasError = true;
+            }
+
+            publish(PUB_SUB_EVENTS.cartUpdate, { source: this.quickOrderListId, cartData: parsedState });
+
+            if (hasError) {
+              this.updateMessage();
+            } else if (action === this.actions.add) {
+              this.updateMessage(parseInt(quantity));
+            } else if (action === this.actions.update) {
+              this.updateMessage(parseInt(quantity - quantityElement.dataset.cartQuantity));
+            } else {
+              this.updateMessage(-parseInt(quantityElement.dataset.cartQuantity));
+            }
+          })
+          .catch((error) => {
+            this.querySelectorAll('.loading__spinner').forEach((overlay) => overlay.classList.add('hidden'));
+            this.resetQuantityInput(id);
+            console.error(error);
+            this.setErrorMessage(window.cartStrings.error);
+          })
+          .finally(() => {
+            this.toggleLoading(id);
+            if (this.lastKey && this.lastElement === id) {
+              this.querySelector(`#Variant-${id} input`).select();
+            }
+          });
+      }
+
+      resetQuantityInput(id, quantityElement) {
+        const input = quantityElement ?? document.getElementById(`Quantity-${id}`);
+        input.value = input.getAttribute('value');
+      }
+
+      setErrorMessage(message = null) {
+        this.errorMessageTemplate =
+          this.errorMessageTemplate ??
+          document.getElementById(`QuickOrderListErrorTemplate-${this.dataset.productId}`).cloneNode(true);
+        const errorElements = document.querySelectorAll('.quick-order-list-error');
+
+        errorElements.forEach((errorElement) => {
+          errorElement.innerHTML = '';
+          if (!message) return;
+          const updatedMessageElement = this.errorMessageTemplate.cloneNode(true);
+          updatedMessageElement.content.querySelector('.quick-order-list-error-message').innerText = message;
+          errorElement.appendChild(updatedMessageElement.content);
+        });
+      }
+
+      updateMessage(quantity = null) {
+        const messages = this.querySelectorAll('.quick-order-list__message-text');
+        const icons = this.querySelectorAll('.quick-order-list__message-icon');
+
+        if (quantity === null || isNaN(quantity)) {
+          messages.forEach((message) => (message.innerHTML = ''));
+          icons.forEach((icon) => icon.classList.add('hidden'));
+          return;
+        }
+
+        const isQuantityNegative = quantity < 0;
+        const absQuantity = Math.abs(quantity);
+
+        const textTemplate = isQuantityNegative
+          ? absQuantity === 1
+            ? window.quickOrderListStrings.itemRemoved
+            : window.quickOrderListStrings.itemsRemoved
+          : quantity === 1
+          ? window.quickOrderListStrings.itemAdded
+          : window.quickOrderListStrings.itemsAdded;
+
+        messages.forEach((msg) => (msg.innerHTML = textTemplate.replace('[quantity]', absQuantity)));
+
+        if (!isQuantityNegative) {
+          icons.forEach((i) => i.classList.remove('hidden'));
+        }
+      }
+
+      updateError(updatedValue, id) {
+        let message = '';
+        if (typeof updatedValue === 'undefined') {
+          message = window.cartStrings.error;
+        } else {
+          message = window.cartStrings.quantityError.replace('[quantity]', updatedValue);
+        }
+        this.updateLiveRegions(id, message);
+      }
+
+      cleanErrors() {
+        this.querySelectorAll('.desktop-row-error').forEach((error) => error.classList.add('hidden'));
+        this.querySelectorAll(`.variant-item__error-text`).forEach((error) => (error.innerHTML = ''));
+      }
+
+      updateLiveRegions(id, message) {
+        const variantItemErrorDesktop = document.getElementById(`Quick-order-list-item-error-desktop-${id}`);
+        const variantItemErrorMobile = document.getElementById(`Quick-order-list-item-error-mobile-${id}`);
+        if (variantItemErrorDesktop) {
+          variantItemErrorDesktop.querySelector('.variant-item__error-text').innerHTML = message;
+          variantItemErrorDesktop.closest('tr').classList.remove('hidden');
+        }
+        if (variantItemErrorMobile)
+          variantItemErrorMobile.querySelector('.variant-item__error-text').innerHTML = message;
+
+        this.variantItemStatusElement.setAttribute('aria-hidden', true);
+
+        const cartStatus = document.getElementById('quick-order-list-live-region-text');
+        cartStatus.setAttribute('aria-hidden', false);
+
+        setTimeout(() => {
+          cartStatus.setAttribute('aria-hidden', true);
+        }, 1000);
+      }
+
+      getSectionInnerHTML(html, selector) {
+        return new DOMParser().parseFromString(html, 'text/html').querySelector(selector).innerHTML;
+      }
+
+      toggleLoading(id, enable) {
+        const quickOrderListItems = this.querySelectorAll(`#Variant-${id} .loading__spinner`);
+        const quickOrderListItem = this.querySelector(`#Variant-${id}`);
+
+        if (enable) {
+          quickOrderListItem.classList.add('quick-order-list__container--disabled');
+          [...quickOrderListItems].forEach((overlay) => overlay.classList.remove('hidden'));
+          this.variantItemStatusElement.setAttribute('aria-hidden', false);
+        } else {
+          quickOrderListItem.classList.remove('quick-order-list__container--disabled');
+          quickOrderListItems.forEach((overlay) => overlay.classList.add('hidden'));
+        }
+      }
+    }
+  );
+}
+```
+This code defines a custom element named `quick-order-list` that manages a quick order list functionality on a product page. Here's a breakdown of its functionalities:
+
+**1. Class Definition (QuickOrderList):**
+
+- The constructor performs various initializations:
+    - Finds the cart drawer element (`cart-drawer`).
+    - Defines actions (`add` and `update`) for updating cart quantities.
+    - Sets up the quick order list ID based on the product ID.
+    - Calls methods to define inputs, the quick order table, and handle variant item focus changes.
+    - Gets references to elements like the total bar, sticky header (if present), and variant item status element.
+    - Optionally sets up logic for sticky header and total bar positioning based on window size and potential scrolling.
+    - Sets up event listeners for window resize and form submission.
+    - Initializes a debounce function for handling quantity changes efficiently.
+
+**2. Lifecycle Methods:**
+
+- `connectedCallback`: Subscribes to a `PUB_SUB_EVENTS.cartUpdate` event to refresh the list when the cart is updated from other sections.
+- `disconnectedCallback`: Unsubscribes from the cart update event listener to avoid memory leaks.
+
+**3. Helper Methods:**
+
+- `defineInputsAndQuickOrderTable`: Finds all quantity input elements and the quick order list table, then adds a focus listener to the table for handling variant switching.
+- `onChange`: Handles changes to quantity input fields. It validates the input based on minimum, maximum, and step values defined for the input. If valid, it updates the cart using `updateQuantity`.
+- `cleanErrorMessageOnType`: Clears any existing error messages when a user starts typing in a quantity field.
+- `validateQuantity`: Validates the entered quantity based on minimum, maximum, and step values. Shows error messages if invalid.
+- `setValidity`: Sets a custom validity message and reports it to the browser, potentially highlighting the input field.
+- `validateInput`: Checks if the entered quantity is valid based on its attributes.
+- `refresh`: Fetches the latest HTML content for the quick order list section from the server and updates the component's innerHTML.
+- `getSectionsToRender`: Defines an array of section IDs and selectors used for updating specific parts of the quick order list during cart updates.
+- `addMultipleDebounce`: Adds debounced event listeners for all quantity input fields to handle changes efficiently.
+- `addDebounce`: Adds a debounced event listener for a specific quantity input field.
+- `renderSections`: Updates specific sections of the quick order list based on the provided parsed state (presumably received from the server) and section IDs/selectors.
+- `getTableHead`: Finds the table head element within the quick order list table.
+- `getTotalBar`: Finds the total bar element within the quick order list.
+- `scrollQuickOrderListTable`: Checks if the selected variant input needs to be scrolled into view based on its position relative to the table head, total bar, and potential sticky header.
+- `scrollToCenter`: Scrolls the quick order list table to center the currently selected variant input field in view.
+- `switchVariants`: Handles focus changes within the quick order list table. It keeps track of the currently selected input field and allows for tabbing between inputs or selecting the next/previous variant using the shift key.
+- `updateMultipleQty`: Updates the cart with multiple quantities at once based on an object containing variant IDs and their new quantities. It shows and hides loading spinners and handles success/error scenarios.
+- `getSectionsUrl`: Constructs the URL for fetching the updated quick order list section based on the current page and any pagination parameters.
+- `updateQuantity`: Updates the cart quantity for a specific variant ID. It handles different scenarios like adding a new item, updating an existing quantity, or removing an item completely. It shows loading spinners, handles success/error scenarios, and updates the DOM accordingly.
+- `resetQuantityInput`: Resets the value of a quantity input field to its original value.
+- `setErrorMessage`: Sets or clears error messages displayed for the quick order list.
+- `updateMessage`: Updates the success message displayed after adding or removing items from the cart.
+- `updateError`: Updates an error message specific to a particular variant and its quantity.
+- `cleanErrors`: Clears all existing error messages displayed for the quick order list.
+- `updateLiveRegions`: Updates live region elements to announce cart updates to assistive technologies, potentially mentioning specific errors related to variant quantities.
+- `getSectionInnerHTML`: Extracts the inner HTML for a specific section from the provided HTML string.
+- `toggleLoading`: Shows or hides loading spinners for a specific variant while updating its quantity in the cart.
+
+In summary, this code provides a comprehensive solution for managing a quick order list with features like quantity validation.
+
+## RecipientForm Class
+```javascript
+if (!customElements.get('recipient-form')) {
+  customElements.define(
+    'recipient-form',
+    class RecipientForm extends HTMLElement {
+      constructor() {
+        super();
+        this.recipientFieldsLiveRegion = this.querySelector(`#Recipient-fields-live-region-${this.dataset.sectionId}`);
+        this.checkboxInput = this.querySelector(`#Recipient-checkbox-${this.dataset.sectionId}`);
+        this.checkboxInput.disabled = false;
+        this.hiddenControlField = this.querySelector(`#Recipient-control-${this.dataset.sectionId}`);
+        this.hiddenControlField.disabled = true;
+        this.emailInput = this.querySelector(`#Recipient-email-${this.dataset.sectionId}`);
+        this.nameInput = this.querySelector(`#Recipient-name-${this.dataset.sectionId}`);
+        this.messageInput = this.querySelector(`#Recipient-message-${this.dataset.sectionId}`);
+        this.sendonInput = this.querySelector(`#Recipient-send-on-${this.dataset.sectionId}`);
+        this.offsetProperty = this.querySelector(`#Recipient-timezone-offset-${this.dataset.sectionId}`);
+        if (this.offsetProperty) this.offsetProperty.value = new Date().getTimezoneOffset().toString();
+
+        this.errorMessageWrapper = this.querySelector('.product-form__recipient-error-message-wrapper');
+        this.errorMessageList = this.errorMessageWrapper?.querySelector('ul');
+        this.errorMessage = this.errorMessageWrapper?.querySelector('.error-message');
+        this.defaultErrorHeader = this.errorMessage?.innerText;
+        this.currentProductVariantId = this.dataset.productVariantId;
+        this.addEventListener('change', this.onChange.bind(this));
+        this.onChange();
+      }
+
+      cartUpdateUnsubscriber = undefined;
+      variantChangeUnsubscriber = undefined;
+      cartErrorUnsubscriber = undefined;
+
+      connectedCallback() {
+        this.cartUpdateUnsubscriber = subscribe(PUB_SUB_EVENTS.cartUpdate, (event) => {
+          if (event.source === 'product-form' && event.productVariantId.toString() === this.currentProductVariantId) {
+            this.resetRecipientForm();
+          }
+        });
+
+        this.variantChangeUnsubscriber = subscribe(PUB_SUB_EVENTS.variantChange, (event) => {
+          if (event.data.sectionId === this.dataset.sectionId) {
+            this.currentProductVariantId = event.data.variant.id.toString();
+          }
+        });
+
+        this.cartUpdateUnsubscriber = subscribe(PUB_SUB_EVENTS.cartError, (event) => {
+          if (event.source === 'product-form' && event.productVariantId.toString() === this.currentProductVariantId) {
+            this.displayErrorMessage(event.message, event.errors);
+          }
+        });
+      }
+
+      disconnectedCallback() {
+        if (this.cartUpdateUnsubscriber) {
+          this.cartUpdateUnsubscriber();
+        }
+
+        if (this.variantChangeUnsubscriber) {
+          this.variantChangeUnsubscriber();
+        }
+
+        if (this.cartErrorUnsubscriber) {
+          this.cartErrorUnsubscriber();
+        }
+      }
+
+      onChange() {
+        if (this.checkboxInput.checked) {
+          this.enableInputFields();
+          this.recipientFieldsLiveRegion.innerText = window.accessibilityStrings.recipientFormExpanded;
+        } else {
+          this.clearInputFields();
+          this.disableInputFields();
+          this.clearErrorMessage();
+          this.recipientFieldsLiveRegion.innerText = window.accessibilityStrings.recipientFormCollapsed;
+        }
+      }
+
+      inputFields() {
+        return [this.emailInput, this.nameInput, this.messageInput, this.sendonInput];
+      }
+
+      disableableFields() {
+        return [...this.inputFields(), this.offsetProperty];
+      }
+
+      clearInputFields() {
+        this.inputFields().forEach((field) => (field.value = ''));
+      }
+
+      enableInputFields() {
+        this.disableableFields().forEach((field) => (field.disabled = false));
+      }
+
+      disableInputFields() {
+        this.disableableFields().forEach((field) => (field.disabled = true));
+      }
+
+      displayErrorMessage(title, body) {
+        this.clearErrorMessage();
+        this.errorMessageWrapper.hidden = false;
+        if (typeof body === 'object') {
+          this.errorMessage.innerText = this.defaultErrorHeader;
+          return Object.entries(body).forEach(([key, value]) => {
+            const errorMessageId = `RecipientForm-${key}-error-${this.dataset.sectionId}`;
+            const fieldSelector = `#Recipient-${key}-${this.dataset.sectionId}`;
+            const message = `${value.join(', ')}`;
+            const errorMessageElement = this.querySelector(`#${errorMessageId}`);
+            const errorTextElement = errorMessageElement?.querySelector('.error-message');
+            if (!errorTextElement) return;
+
+            if (this.errorMessageList) {
+              this.errorMessageList.appendChild(this.createErrorListItem(fieldSelector, message));
+            }
+
+            errorTextElement.innerText = `${message}.`;
+            errorMessageElement.classList.remove('hidden');
+
+            const inputElement = this[`${key}Input`];
+            if (!inputElement) return;
+
+            inputElement.setAttribute('aria-invalid', true);
+            inputElement.setAttribute('aria-describedby', errorMessageId);
+          });
+        }
+
+        this.errorMessage.innerText = body;
+      }
+
+      createErrorListItem(target, message) {
+        const li = document.createElement('li');
+        const a = document.createElement('a');
+        a.setAttribute('href', target);
+        a.innerText = message;
+        li.appendChild(a);
+        li.className = 'error-message';
+        return li;
+      }
+
+      clearErrorMessage() {
+        this.errorMessageWrapper.hidden = true;
+
+        if (this.errorMessageList) this.errorMessageList.innerHTML = '';
+
+        this.querySelectorAll('.recipient-fields .form__message').forEach((field) => {
+          field.classList.add('hidden');
+          const textField = field.querySelector('.error-message');
+          if (textField) textField.innerText = '';
+        });
+
+        [this.emailInput, this.messageInput, this.nameInput, this.sendonInput].forEach((inputElement) => {
+          inputElement.setAttribute('aria-invalid', false);
+          inputElement.removeAttribute('aria-describedby');
+        });
+      }
+
+      resetRecipientForm() {
+        if (this.checkboxInput.checked) {
+          this.checkboxInput.checked = false;
+          this.clearInputFields();
+          this.clearErrorMessage();
+        }
+      }
+    }
+  );
+}
+```
+The code defines a custom web component named `recipient-form`. This component is likely used on a product page to manage recipient information for a gift or similar functionality.
+
+Here's a breakdown of its functionalities:
+
+**1. Class Definition (RecipientForm):**
+
+- The constructor gathers references to various DOM elements using `querySelector` based on IDs and data attributes. 
+  - These elements include recipient fields (email, name, message), checkbox for enabling the recipient section, hidden control field, live region element for accessibility announcements, error message elements, and an offset property (possibly for timezones).
+  - It also sets up an initial value for the offset property if it exists.
+- It sets up event listeners for the checkbox `change` event and calls the `onChange` method initially.
+- It stores unsubscriber functions for various events (`cartUpdate`, `variantChange`, `cartError`) to be used later for cleanup.
+
+**2. Lifecycle Methods:**
+
+- `connectedCallback`:
+    - Subscribes to three events using a `subscribe` function (not shown in the provided code):
+        - `PUB_SUB_EVENTS.cartUpdate`: Listens for cart updates and resets the recipient form if the update originates from the product form and applies to the current product variant.
+        - `PUB_SUB_EVENTS.variantChange`: Listens for variant changes and updates the `currentProductVariantId` property if the change happens in the same section as the recipient form.
+        - `PUB_SUB_EVENTS.cartError`: Listens for cart errors and displays an error message if the error originates from the product form and applies to the current product variant.
+- `disconnectedCallback`: Unsubscribes from all previously subscribed events to avoid memory leaks.
+
+**3. Helper Methods:**
+
+- `onChange`: Reacts to changes on the checkbox input.
+    - If checked, it enables recipient input fields and updates the live region with a message indicating the recipient form is expanded.
+    - If unchecked, it clears input fields, disables them, clears any error messages, and updates the live region with a message indicating the recipient form is collapsed.
+- `inputFields`: Returns an array of recipient input fields (email, name, message, send date).
+- `disableableFields`: Returns an array of all recipient input fields including the offset property (if it exists).
+- `clearInputFields`: Clears the values of all recipient input fields.
+- `enableInputFields`: Enables all recipient input fields and the offset property (if it exists).
+- `disableInputFields`: Disables all recipient input fields and the offset property (if it exists).
+- `displayErrorMessage`: Displays an error message based on a title and body.
+    - Clears any previous error messages.
+    - If the body is an object, it iterates through each key-value pair:
+        - It constructs an error message ID and field selector based on the key and data section ID.
+        - It finds the corresponding error message element and its text element.
+        - It creates an error list item (if applicable) and sets the error message for the specific field.
+        - It updates the error message text element and removes the hidden class from the error message element.
+        - It sets accessibility attributes on the recipient input field to indicate an error and link it to the specific error message.
+    - If the body is a string, it sets it directly as the error message. 
+- `createErrorListItem`: Creates an error list item element with a link to the target field and the error message.
+- `clearErrorMessage`: Clears all displayed error messages.
+    - Hides the error message wrapper.
+    - Clears the error message list content (if it exists).
+    - Hides all individual error message elements and clears their text content.
+    - Removes accessibility error attributes from recipient input fields.
+- `resetRecipientForm`: Resets the recipient form by clearing the checkbox selection, input fields, and error messages.
+
+Overall, this custom component  provides a reusable way to manage recipient information for a product, including enabling/disabling fields based on a checkbox selection, handling form input and validation (presumably done elsewhere), and displaying error messages related to recipient information. It also incorporates accessibility features using live regions and error linking.
+
+## SearchForm Class
+```javascript
+class SearchForm extends HTMLElement {
+  constructor() {
+    super();
+    this.input = this.querySelector('input[type="search"]');
+    this.resetButton = this.querySelector('button[type="reset"]');
+
+    if (this.input) {
+      this.input.form.addEventListener('reset', this.onFormReset.bind(this));
+      this.input.addEventListener(
+        'input',
+        debounce((event) => {
+          this.onChange(event);
+        }, 300).bind(this)
+      );
+    }
+  }
+
+  toggleResetButton() {
+    const resetIsHidden = this.resetButton.classList.contains('hidden');
+    if (this.input.value.length > 0 && resetIsHidden) {
+      this.resetButton.classList.remove('hidden');
+    } else if (this.input.value.length === 0 && !resetIsHidden) {
+      this.resetButton.classList.add('hidden');
+    }
+  }
+
+  onChange() {
+    this.toggleResetButton();
+  }
+
+  shouldResetForm() {
+    return !document.querySelector('[aria-selected="true"] a');
+  }
+
+  onFormReset(event) {
+    // Prevent default so the form reset doesn't set the value gotten from the url on page load
+    event.preventDefault();
+    // Don't reset if the user has selected an element on the predictive search dropdown
+    if (this.shouldResetForm()) {
+      this.input.value = '';
+      this.input.focus();
+      this.toggleResetButton();
+    }
+  }
+}
+
+customElements.define('search-form', SearchForm);
+```
+This code defines a custom web component named `search-form` that enhances the functionality of a search form element. Here's a breakdown of its functionalities:
+
+**1. Class Definition (SearchForm):**
+
+- The constructor finds references to the search input element (`type="search"`) and the reset button (`type="reset"`) within the custom element.
+- It checks if the search input is found:
+    - If yes, it sets up event listeners:
+        - Listens for the `reset` event on the form containing the search input and calls the `onFormReset` method.
+        - Listens for the `input` event on the search input and uses a debounced function (`debounce`) to call the `onChange` method after a 300ms delay to avoid excessive calls during rapid typing.
+
+**2. Helper Methods:**
+
+- `toggleResetButton`: Shows or hides the reset button based on the search input value.
+    - It checks if the reset button is currently hidden and the input value has content. If so, it unhides the button.
+    - Conversely, it checks if the reset button is visible and the input value is empty. If so, it hides the button.
+- `onChange`: Calls the `toggleResetButton` method whenever the search input value changes.
+- `shouldResetForm`: Checks if the user has selected an element from the predictive search dropdown (presumably implemented elsewhere using `aria-selected`). It returns `true` if no element is selected, indicating the user wants to reset the search.
+- `onFormReset`: Prevents the default form reset behavior (which might set the value from the URL on page load).
+    - It checks if the user has selected an element from the predictive search dropdown using `shouldResetForm`.
+    - If no element is selected (meaning the user wants to reset), it clears the search input value, focuses it, and updates the reset button visibility.
+
+**In summary, this custom component provides the following enhancements to a search form:**
+
+- Shows/hides the reset button based on the presence of text in the search input.
+- Prevents the form from resetting to a value from the URL on page load if the user hasn't interacted with the predictive search dropdown.
+- Optionally resets the search input if no predictive search results are selected during a form reset.
+
+## ShareButton Class
+```javascript
+if (!customElements.get('share-button')) {
+  customElements.define(
+    'share-button',
+    class ShareButton extends DetailsDisclosure {
+      constructor() {
+        super();
+
+        this.elements = {
+          shareButton: this.querySelector('button'),
+          shareSummary: this.querySelector('summary'),
+          closeButton: this.querySelector('.share-button__close'),
+          successMessage: this.querySelector('[id^="ShareMessage"]'),
+          urlInput: this.querySelector('input'),
+        };
+        this.urlToShare = this.elements.urlInput ? this.elements.urlInput.value : document.location.href;
+
+        if (navigator.share) {
+          this.mainDetailsToggle.setAttribute('hidden', '');
+          this.elements.shareButton.classList.remove('hidden');
+          this.elements.shareButton.addEventListener('click', () => {
+            navigator.share({ url: this.urlToShare, title: document.title });
+          });
+        } else {
+          this.mainDetailsToggle.addEventListener('toggle', this.toggleDetails.bind(this));
+          this.mainDetailsToggle
+            .querySelector('.share-button__copy')
+            .addEventListener('click', this.copyToClipboard.bind(this));
+          this.mainDetailsToggle.querySelector('.share-button__close').addEventListener('click', this.close.bind(this));
+        }
+      }
+
+      toggleDetails() {
+        if (!this.mainDetailsToggle.open) {
+          this.elements.successMessage.classList.add('hidden');
+          this.elements.successMessage.textContent = '';
+          this.elements.closeButton.classList.add('hidden');
+          this.elements.shareSummary.focus();
+        }
+      }
+
+      copyToClipboard() {
+        navigator.clipboard.writeText(this.elements.urlInput.value).then(() => {
+          this.elements.successMessage.classList.remove('hidden');
+          this.elements.successMessage.textContent = window.accessibilityStrings.shareSuccess;
+          this.elements.closeButton.classList.remove('hidden');
+          this.elements.closeButton.focus();
+        });
+      }
+
+      updateUrl(url) {
+        this.urlToShare = url;
+        this.elements.urlInput.value = url;
+      }
+    }
+  );
+}
+```
+This code defines a custom web component named `share-button` that provides functionality for sharing a webpage. Here's a breakdown of its functionalities:
+
+**1. Class Definition (ShareButton):**
+
+- It inherits from a base class `DetailsDisclosure` (not shown in the code) which likely provides functionality related to details/summary elements.
+- The constructor:
+    - Finds references to various DOM elements using `querySelector`:
+        - Share button element (button)
+        - Summary element
+        - Close button within the share button
+        - Success message element (presumably with an ID starting with "ShareMessage")
+        - URL input element (if present)
+    - If a URL input element exists, it sets `urlToShare` to its value. Otherwise, it uses the current page URL from `document.location.href`.
+    - Checks for `navigator.share` support:
+        - If supported (modern browsers with Web Share API), it hides the details toggle element and shows the share button. Clicking the button triggers a `navigator.share` call with the page URL and title.
+        - If not supported, it sets up event listeners for the details toggle element:
+            - `toggle`: Calls the `toggleDetails` method.
+            - A click event listener on the copy button within the toggle element triggers the `copyToClipboard` method.
+            - A click event listener on the close button within the toggle element triggers the `close` method (presumably inherited from the base class).
+
+**2. Helper Methods:**
+
+- `toggleDetails`: Handles details element behavior when the toggle is clicked.
+    - If the details are not open, it resets the success message content and visibility, hides the close button, and focuses the summary element.
+- `copyToClipboard`: Uses the `navigator.clipboard.writeText` API to copy the URL to the clipboard.
+    - On success, it displays a success message, shows the close button, and focuses it for accessibility.
+- `updateUrl`: Updates the internal URL to share (presumably called externally).
+    - It sets the `urlToShare` property and updates the URL input value (if present).
+
+In summary, this component provides a versatile way to share a webpage. It uses the Web Share API for modern browsers and falls back to a copy-to-clipboard functionality for older browsers. It also incorporates accessibility features like hiding/showing success messages and focusing interactive elements.
+
+## ShowMore Class
+```javascript
+if (!customElements.get('show-more-button')) {
+  customElements.define(
+    'show-more-button',
+    class ShowMoreButton extends HTMLElement {
+      constructor() {
+        super();
+        const button = this.querySelector('button');
+        button.addEventListener('click', (event) => {
+          this.expandShowMore(event);
+          const nextElementToFocus = event.target.closest('.parent-display').querySelector('.show-more-item');
+          if (nextElementToFocus && !nextElementToFocus.classList.contains('hidden') && nextElementToFocus.querySelector('input')) {
+            nextElementToFocus.querySelector('input').focus();
+          }
+        });
+      }
+      expandShowMore(event) {
+        const parentDisplay = event.target.closest('[id^="Show-More-"]').closest('.parent-display');
+        const parentWrap = parentDisplay.querySelector('.parent-wrap');
+        this.querySelectorAll('.label-text').forEach((element) => element.classList.toggle('hidden'));
+        parentDisplay.querySelectorAll('.show-more-item').forEach((item) => item.classList.toggle('hidden'));
+        if (!this.querySelector('.label-show-less')) {
+          this.classList.add('hidden');
+        }
+      }
+    }
+  );
+}
+```
+This code defines a custom web component named `show-more-button` that manages a "show more" functionality for content sections. Here's a breakdown of its functionalities:
+
+**1. Class Definition (ShowMoreButton):**
+
+- The constructor finds the button element within the custom element and adds a click event listener.
+- Clicking the button triggers the `expandShowMore` method, passing the click event as an argument.
+
+**2. Helper Method:**
+
+- `expandShowMore`: Handles the logic for showing/hiding content and updating the button state.
+    - It finds the parent display container based on the button element using `closest` methods.
+    - It finds the parent wrapper element within the display container.
+    - It toggles the visibility of all elements with the class `label-text`. This likely refers to labels displayed when the content is hidden.
+    - It toggles the visibility of all elements with the class `show-more-item`. These are presumably the content items that are being shown or hidden.
+    - If there are no more elements with the class `label-show-less` (presumably indicating "show less" functionality isn't available), it hides the "show more" button itself.
+
+In summary, this component provides a way to toggle the visibility of content sections using a "show more" button. It also handles automatic hiding of the button when there's no more content to show.
